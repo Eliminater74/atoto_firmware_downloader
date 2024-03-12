@@ -1,23 +1,40 @@
-# ATOTO Firmware Downloader
+# ATOTO Firmware Downloader Extravaganza
 
-This script downloads firmware for ATOTO devices.
+Behold, weary internet traveler, the ultimate tool to conquer the depths of ATOTO's [CarPlay](https://en.wikipedia.org/wiki/CarPlay) firmware downloads! Born out of sheer frustration with ATOTO's attempt at a website for firmware downloads (no offense, ATOTO, we still love your gadgets), this Python script is your shining armor in the dark.
 
-## Getting Started
+Seriously, this was the state of affairs:
+![atoto firmware download website screenshot](./docs/atoto-website-screenshot.png)
 
-These instructions will get you a copy of the project up and running on your local machine.
+Fear no more! With our ATOTO Firmware Downloader, you'll be downloading firmware like a pro, bypassing the labyrinth that is the ATOTO download site with the grace of a gazelle.
 
-### Prerequisites
+## Getting This Show on the Road
 
-- Python 3.x
-- pip
-- virtualenv
+Dare to embark on this quest? Here's how to wield this mighty script:
 
-### Installing
+### 1. Conjure Up a Virtual Environment
 
-First, clone this repository or download the project to your local machine. Then, navigate to the project directory and set up a virtual environment:
+First, clone this repository to your local mage tower. Then, cast the following incantation in the terminal within the project's sacred grounds:
 
 ```bash
 virtualenv .venv
 source .venv/bin/activate  # On macOS and Linux
 .venv\Scripts\activate  # On Windows
+```
 
+### 2. Install the Arcane Scrolls (`requirements.txt`)
+
+With your environment shielded from the chaos of dependency conflicts, install the required artifacts:
+
+```bash
+pip install -r requirements.txt
+```
+
+### 3. Unleash the Power
+
+With the preparations complete, you may now unleash the magic:
+
+```bash
+python atoto_firmware_downloader.py
+```
+
+A mystical interface shall appear, guiding you through the sacred selection of firmware. Choose wisely.
