@@ -1,40 +1,104 @@
-# ATOTO Firmware Downloader Extravaganza
+# ⚡ ATOTO Firmware Downloader
 
-Behold, weary internet traveler, the ultimate tool to conquer the depths of ATOTO's [CarPlay](https://en.wikipedia.org/wiki/CarPlay) firmware downloads! Born out of sheer frustration with ATOTO's attempt at a website for firmware downloads (no offense, ATOTO, we still love your gadgets), this Python script is your shining armor in the dark.
+A modern, streamlined tool for downloading **ATOTO CarPlay/Android Auto firmware** directly from ATOTO’s servers — without fighting their clunky website.
 
-Seriously, this was the state of affairs:
-![atoto firmware download website screenshot](./docs/atoto-website-screenshot.png)
+This script automatically **probes ATOTO’s API and JSON endpoints** for your head unit’s model, lists available firmware packages in a clean interactive table, and lets you download with a single keypress.
 
-Fear no more! With our ATOTO Firmware Downloader, you'll be downloading firmware like a pro, bypassing the labyrinth that is the ATOTO download site with the grace of a gazelle.
+---
 
-## Getting This Show on the Road
+## ✨ Features
 
-Dare to embark on this quest? Here's how to wield this mighty script:
+✅ **API + JSON probing** – Finds firmware even if one method fails
+✅ **Interactive console UI** – Rich tables, ASCII logo, and color-coded output
+✅ **Direct download links** – No more endless clicking through ATOTO’s site
+✅ **Model-based detection** – Enter your unit’s model and get matching firmware
+✅ **Error handling** – Falls back gracefully if packages aren’t found
+✅ **Windows + Linux + macOS support** – Works anywhere Python runs
 
-### 1. Conjure Up a Virtual Environment
+---
 
-First, clone this repository to your local mage tower. Then, cast the following incantation in the terminal within the project's sacred grounds:
+## 📦 Requirements
+
+* Python **3.9+**
+* `pip install -r requirements.txt`
+
+The script uses:
+
+* [`requests`](https://pypi.org/project/requests/) – for HTTP requests
+* [`rich`](https://pypi.org/project/rich/) – for the pretty console UI
+
+---
+
+## 🚀 Usage
+
+1. Clone this repo:
 
 ```bash
-virtualenv .venv
-source .venv/bin/activate  # On macOS and Linux
-.venv\Scripts\activate  # On Windows
+git clone https://github.com/Eliminater74/atoto_firmware_downloader.git
+cd atoto_firmware_downloader
 ```
 
-### 2. Install the Arcane Scrolls (`requirements.txt`)
+2. (Optional) Create a virtual environment:
 
-With your environment shielded from the chaos of dependency conflicts, install the required artifacts:
+```bash
+python -m venv .venv
+source .venv/bin/activate  # macOS/Linux
+.venv\Scripts\activate     # Windows
+```
+
+3. Install dependencies:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 3. Unleash the Power
-
-With the preparations complete, you may now unleash the magic:
+4. Run the script:
 
 ```bash
 python atoto_firmware_downloader.py
 ```
 
-A mystical interface shall appear, guiding you through the sacred selection of firmware. Choose wisely.
+---
+
+## 🖥️ Example Run
+
+```text
+╔════════════════════════════════════╗
+║              ATOTO                 ║
+╚════════════════════════════════════╝
+Available Packages (API)
+─────────────────────────────────────
+ #   Title        Version  Date   Size   URL
+─────────────────────────────────────
+ 1   S8G2103M...  20       None   None   https://file.myatoto.com/...
+─────────────────────────────────────
+Select # (1):
+```
+
+---
+
+## ⚠️ Notes
+
+* If no packages are found, double-check your unit’s **About → Model Number**.
+* Some ATOTO models have firmware hosted only under certain “Gen” lines.
+* This script does **not modify** firmware files — it only fetches official packages.
+
+---
+
+## 🛠️ Roadmap
+
+* [ ] Add checksum verification after download
+* [ ] Auto-extract `.zip` updates
+* [ ] Cache probed results for offline reference
+
+---
+
+## 🤝 Contributing
+
+Pull requests welcome! If you’ve tested this script with different ATOTO models, please share results.
+
+---
+
+## 📜 License
+
+MIT — free to use, modify, and share.
