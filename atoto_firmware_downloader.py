@@ -1,17 +1,21 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-ATOTO Firmware Downloader (API-first, normalization, clean screens)
-- Robust against API responses with data=None or unexpected shapes
-- Uses official getIbookList API; falls back to JSON probing if needed
-- Clear-screen UI + resumable downloads
+ATOTO Firmware Downloader — multi-source
+- Clean-screen UI (rich; no blended output)
+- Retail/DeviceName → Canonical mapping (e.g., S8EG2A74MSB / ATL-S8-HU → S8G2A74MS-S01)
+- Smart normalization (ATL→S8G2…, EG2→G2, common -S01/-S10/-W variants)
+- Source order shown together: API + JSON + Known mirrors (Aliyun / atoto-usa bucket)
+- "Did you mean...?" suggestions with 1-click retry
+- Manual URL mode for direct links
+- Resumable downloads + optional checksum verify
 
-Deps:
+Install:
   pip install requests rich
 """
 
 from __future__ import annotations
-import json, math, re, hashlib
+import json, math, re, hashlib, urllib.parse
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Tuple
 
@@ -28,11 +32,45 @@ from rich.progress import (
 
 console = Console()
 
+# ────────────────────────── Constants ──────────────────────────
 BASE = "https://resources.myatoto.com/atoto-product-ibook/ibMobile"
 API_GET_IBOOK_LIST = f"{BASE}/getIbookList"
-UA = "ATOTO-Firmware-CLI/2.2 (+https://github.com/Eliminater74)"
+UA = "ATOTO-Firmware-CLI/2.8 (+https://github.com/Eliminater74)"
 
-# ───────────── UI helpers ─────────────
+# Retail / DeviceName → canonical firmware model(s). Extend as needed.
+RETAIL_TO_CANONICAL: Dict[str, List[str]] = {
+    "S8EG2A74MSB": ["S8G2A74MS-S01", "S8G2A74MS-S10", "S8G2A74MS"],
+    "ATL-S8-HU":   ["S8G2A74MS-S01", "S8G2A74MS-S10", "S8G2A74MS"],
+
+    "S8EG2C74MSB": ["S8G2C74MS-S01", "S8G2C74MS-S10", "S8G2C74MS"],
+    "S8EG2B74PMB": ["S8G2B74PM-S01", "S8G2B74PM-S10", "S8G2B74PM"],
+}
+
+COMMON_VARIANTS = ["-S01", "-S10", "-S01W", "-S10W", "-S01R", "-S10R", "S01", "S10", "S01W", "S10W", "S01R", "S10R"]
+
+# Curated public links that have worked for S8 Gen2 (UIS7862 “6315”)
+# Shown regardless of API results. We HEAD-check each before listing.
+# Regex now matches ALL S8G2 variants (A7/B7 and PE/PM/MS).
+KNOWN_LINKS: List[Dict[str, str]] = [
+    {
+        "match": r"^(S8G2A7|S8G2B7|S8G2A74|S8G2B74).*$",
+        "title": "S8 Gen2 (UIS7862 6315) — 2025-04-01/05-14",
+        "url":   "https://atoto-usa.oss-us-west-1.aliyuncs.com/2025/FILE_UPLOAD_URL_2/85129692/6315-SYSTEM20250401-APP20250514.zip",
+    },
+    {
+        "match": r"^(S8G2A7|S8G2B7|S8G2A74|S8G2B74).*$",
+        "title": "S8 Gen2 (UIS7862 6315, 1024×600) — 2023-11-10/20",
+        "url":   "https://atoto-usa.oss-us-west-1.aliyuncs.com/2023/FILE_UPLOAD_URL_2/03850677/6315_1024x600_system231110_app_231120.zip",
+    },
+    {
+        "match": r"^(S8G2A7|S8G2B7|S8G2A74|S8G2B74).*$",
+        "title": "S8 Gen2 (UIS7862 6315, 1280×720) — 2023-11-10/20",
+        "url":   "https://atoto-usa.oss-us-west-1.aliyuncs.com/2023/FILE_UPLOAD_URL_2/03850677/6315_1280x720_system231110_app_231120.zip",
+    },
+    # Add more mirrors here as you discover them…
+]
+
+# ────────────────────────── UI helpers ──────────────────────────
 def clear_screen() -> None:
     console.clear()
 
@@ -55,7 +93,7 @@ def section(title: str, subtitle: str = "") -> None:
 def splash() -> None:
     section("ATOTO Firmware Downloader")
 
-# ───────────── HTTP session ─────────────
+# ────────────────────────── Session ──────────────────────────
 def make_session() -> requests.Session:
     s = requests.Session()
     retries = Retry(
@@ -73,7 +111,7 @@ def make_session() -> requests.Session:
 
 SESSION = make_session()
 
-# ───────────── utils ─────────────
+# ────────────────────────── Utils ──────────────────────────
 def safe_filename(name: str) -> str:
     return re.sub(r'[\\/*?:"<>|]+', "_", (name or "")).strip() or "file"
 
@@ -101,17 +139,42 @@ def head_ok(url: str, timeout: int = 12) -> bool:
     except Exception:
         return False
 
-# ───────────── model normalization ─────────────
-COMMON_VARIANTS = ["-S01", "-S10", "-S01W", "-S01R", "S01", "S10", "S01W", "S01R"]
+def dig(obj: Any, *keys: str) -> Any:
+    cur = obj
+    for k in keys:
+        if not isinstance(cur, dict):
+            return None
+        cur = cur.get(k)
+    return cur
 
+def url_leaf_name(u: str) -> str:
+    return urllib.parse.unquote(u.split("/")[-1]) or "download.zip"
+
+# ────────────────────────── Model normalization & suggestions ──────────────────────────
 def normalize_candidates(raw: str) -> List[str]:
+    """
+    Turn retail/device inputs like 'S8EG2A74MSB' or 'ATL-S8-HU' into
+    a prioritized list of canonical firmware keys.
+    Order: explicit mapping → special ATL guess → raw → EG2→G2 → suffix variants.
+    """
     r = (raw or "").strip().upper()
     r = re.sub(r"\s+", "", r)
 
-    cands = [r]
+    mapped = RETAIL_TO_CANONICAL.get(r, [])
+    cands: List[str] = list(mapped)
+
+    if r.startswith("ATL-S8"):  # device name seen on About screen
+        base_guess = "S8G2A74MS"
+        for suf in ["-S01", "-S10", ""]:
+            v = base_guess + suf
+            if v not in cands:
+                cands.append(v)
+
+    if r not in cands:
+        cands.append(r)
 
     base = re.sub(r"([A-Z0-9-]*[A-Z0-9])(?!-S\d{2}[A-Z]?)?[A-Z]*$", r"\1", r)
-    if base not in cands:
+    if base and base not in cands:
         cands.append(base)
 
     eg2_to_g2 = base.replace("EG2", "G2")
@@ -135,29 +198,31 @@ def normalize_candidates(raw: str) -> List[str]:
             seen.add(x); out.append(x)
     return out
 
-# ───────────── small helpers ─────────────
-def dig(obj: Any, *keys: str) -> Any:
-    """Safely descend nested dicts; returns None on any mismatch."""
-    cur = obj
-    for k in keys:
-        if not isinstance(cur, dict):
-            return None
-        cur = cur.get(k)
-    return cur
+def build_suggestions(raw: str) -> List[str]:
+    """
+    Build a short, user-friendly suggestion list from normalization,
+    ranked: mapped → -S01/-S10 → base without suffix.
+    """
+    cands = normalize_candidates(raw)
+    ranked: List[str] = []
+    mapped = RETAIL_TO_CANONICAL.get(raw.upper(), [])
+    ranked += mapped
+    for suf in ("-S01", "-S10"):
+        for c in cands:
+            if c.endswith(suf) and c not in ranked:
+                ranked.append(c)
+    base = re.sub(r"([A-Z0-9-]*[A-Z0-9])(?:-S\d{2}[A-Z]?)?$", r"\1", (cands[0] if cands else raw).upper())
+    for c in cands:
+        if c == base and c not in ranked:
+            ranked.append(c)
+    for c in cands:
+        if c not in ranked:
+            ranked.append(c)
+    return ranked[:8]
 
-# ───────────── API-first discovery ─────────────
+# ────────────────────────── Discovery: API & JSON ──────────────────────────
 def fetch_api_packages(model: str, mcu_version: str = "") -> List[Dict[str, Any]]:
-    """
-    Call ATOTO getIbookList; be defensive about shapes:
-    - sometimes {"data": null}
-    - sometimes different nesting
-    """
-    params = {
-        "skuModel": model,
-        "mcuVersion": mcu_version,
-        "langType": 1,   # English
-        "iBookType": 2,  # firmware/software page
-    }
+    params = {"skuModel": model, "mcuVersion": mcu_version, "langType": 1, "iBookType": 2}
     try:
         r = SESSION.get(API_GET_IBOOK_LIST, params=params, timeout=20)
         r.raise_for_status()
@@ -168,24 +233,21 @@ def fetch_api_packages(model: str, mcu_version: str = "") -> List[Dict[str, Any]
     if not isinstance(data, dict):
         return []
 
-    # If API returns an error code, bail quietly
     code = data.get("code") or data.get("status")
     if code not in (None, 0, "0", 200, "200"):
         return []
 
     pkgs: List[Dict[str, Any]] = []
 
-    # Primary known field (guarded)
     soc_url = dig(data, "data", "softwareVo", "socVo", "socUrl")
     if isinstance(soc_url, str) and soc_url.startswith("http"):
-        title = Path(soc_url).name
+        title = url_leaf_name(soc_url)
         ver = re.findall(r'([rv]?[\d._-]+)', title.replace(" ", ""))[:1] or ["N/A"]
         pkgs.append({
             "id": "1", "title": title, "version": ver[0], "date": "",
-            "size": None, "url": soc_url, "hash": ""
+            "size": None, "url": soc_url, "hash": "", "source": "API"
         })
 
-    # Also scan for arrays in a few likely places (all guarded)
     candidate_arrays = [
         dig(data, "data", "softwareVo", "fileList"),
         dig(data, "data", "softwareVo", "socVo", "files"),
@@ -195,24 +257,23 @@ def fetch_api_packages(model: str, mcu_version: str = "") -> List[Dict[str, Any]
     for arr in candidate_arrays:
         if isinstance(arr, list):
             for e in arr:
-                if not isinstance(e, dict):
-                    continue
+                if not isinstance(e, dict): continue
                 url = e.get("url") or e.get("file") or e.get("download")
-                if not url:
-                    continue
+                if not url: continue
+                title = e.get("title") or e.get("name") or url_leaf_name(url)
                 pkgs.append({
-                    "id": str(len(pkgs) + 1),
-                    "title": e.get("title") or e.get("name") or Path(url).name,
+                    "id": "0",
+                    "title": title,
                     "version": e.get("version") or "N/A",
                     "date": e.get("date") or "",
                     "size": e.get("size") or None,
                     "url": url,
                     "hash": e.get("sha256") or e.get("sha1") or e.get("md5") or "",
+                    "source": "API"
                 })
 
     return pkgs
 
-# ───────────── Fallback JSON probing ─────────────
 def series_from_model(q: str) -> List[str]:
     m = re.match(r'([A-Za-z]+?\d+)', q)
     if m:
@@ -269,25 +330,59 @@ def discover_packages_via_json(model: str) -> Tuple[List[Dict[str, Any]], str]:
 
         pkgs: List[Dict[str, Any]] = []
         for idx, e in enumerate(iterable, start=1):
-            if not isinstance(e, dict):
-                continue
+            if not isinstance(e, dict): continue
             url = e.get("url") or e.get("file") or e.get("download") or e.get("href")
-            if not url:
-                continue
-            title = e.get("title") or e.get("name") or Path(url).name
+            if not url: continue
+            title = e.get("title") or e.get("name") or url_leaf_name(url)
             version = e.get("version") or re.findall(r'([rv]?[\d._-]+)', (title or "").replace(" ", ""))[:1]
             version = version[0] if isinstance(version, list) and version else (version or "N/A")
             size = e.get("size") or None
             date = e.get("date") or e.get("time") or e.get("released") or ""
             sha = e.get("sha256") or e.get("sha1") or e.get("md5") or ""
             full_url = url if url.startswith("http") else f"{BASE.rstrip('/')}/{url.lstrip('/')}"
-            pkgs.append({"id": str(idx), "title": title, "version": version, "date": date,
-                         "size": size, "url": full_url, "hash": sha})
+            pkgs.append({
+                "id": str(idx), "title": title, "version": version, "date": date,
+                "size": size, "url": full_url, "hash": sha, "source": "JSON"
+            })
         if pkgs:
             return pkgs, u
     return [], ""
 
-# ───────────── download ─────────────
+# ────────────────────────── Discovery: Known mirrors (Aliyun, etc.) ──────────────────────────
+def known_links_for_model(model: str) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    for entry in KNOWN_LINKS:
+        if re.search(entry["match"], model):
+            url = entry["url"]
+            if head_ok(url):
+                title = entry.get("title") or url_leaf_name(url)
+                ver = re.findall(r'([rv]?[\d._-]+)', url_leaf_name(url).replace(" ", ""))[:1] or ["N/A"]
+                out.append({
+                    "id": "0",
+                    "title": f"[mirror] {title}",
+                    "version": ver[0],
+                    "date": "",
+                    "size": None,
+                    "url": url,
+                    "hash": "",
+                    "source": "MIRROR",
+                })
+    # number them
+    for i, p in enumerate(out, 1):
+        p["id"] = str(i)
+    return out
+
+# ────────────────────────── De-dupe ──────────────────────────
+def dedupe_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    seen = set(); out = []
+    for r in rows:
+        key = ((r.get("url") or "").strip(), (r.get("title") or "").strip())
+        if key in seen:
+            continue
+        seen.add(key); out.append(r)
+    return out
+
+# ────────────────────────── Download ──────────────────────────
 def download_with_progress(url: str, out_path: Path, expected_hash: str = "") -> None:
     tmp_path = out_path.with_suffix(out_path.suffix + ".part")
     resume = tmp_path.stat().st_size if tmp_path.exists() else 0
@@ -330,15 +425,13 @@ def download_with_progress(url: str, out_path: Path, expected_hash: str = "") ->
         if algo == "sha256":
             digest = sha256_file(out_path)
         elif algo == "sha1":
-            import hashlib as _h
-            h = _h.sha1()
+            import hashlib as _h; h = _h.sha1()
             with out_path.open("rb") as f:
                 for chunk in iter(lambda: f.read(1024 * 1024), b""):
                     h.update(chunk)
             digest = h.hexdigest()
         else:
-            import hashlib as _h
-            h = _h.md5()
+            import hashlib as _h; h = _h.md5()
             with out_path.open("rb") as f:
                 for chunk in iter(lambda: f.read(1024 * 1024), b""):
                     h.update(chunk)
@@ -348,15 +441,13 @@ def download_with_progress(url: str, out_path: Path, expected_hash: str = "") ->
         else:
             console.print("[green]Checksum OK[/]")
 
-# ───────────── selection UI ─────────────
+# ────────────────────────── Selection UI ──────────────────────────
 def show_candidates(title: str, tried: List[str], hits: List[str]) -> None:
-    section(title, "Auto-normalized model inputs and which ones matched")
+    section(title, "Auto-normalized inputs and which matched the API")
     tbl = Table(show_lines=False, header_style="bold magenta")
-    tbl.add_column("Tried", overflow="fold")
-    tbl.add_column("Matched", overflow="fold")
+    tbl.add_column("Tried", overflow="fold"); tbl.add_column("Matched", overflow="fold")
     maxlen = max(len(tried), len(hits))
-    tried += [""] * (maxlen - len(tried))
-    hits  += [""] * (maxlen - len(hits))
+    tried += [""] * (maxlen - len(tried)); hits += [""] * (maxlen - len(hits))
     for a, b in zip(tried, hits):
         tbl.add_row(a, b)
     console.print(tbl)
@@ -365,73 +456,140 @@ def select_from_rows(rows: List[Dict[str, Any]], title: str) -> Optional[Dict[st
     while True:
         section(title, "Select a package to download (0 to cancel)")
         if not rows:
-            console.print("[red]No results.[/]")
-            return None
+            console.print("[red]No results.[/]"); return None
         table = Table(title=title, show_lines=False, header_style="bold magenta")
-        for key, header in [("id","#"),("title","Title"),("version","Version"),("date","Date"),("size","Size"),("url","URL")]:
+        cols = [("id","#"),("source","Source"),("title","Title"),("version","Version"),("date","Date"),("size","Size"),("url","URL")]
+        for _, header in cols:
             table.add_column(header, overflow="fold")
         for r in rows:
-            table.add_row(*[str(r.get(k,"")) for k,_ in [("id","#"),("title","Title"),("version","Version"),("date","Date"),("size","Size"),("url","URL")]])
+            row = [str(r.get(k,"")) for k,_ in cols]
+            table.add_row(*row)
         console.print(table)
         raw = Prompt.ask("Select #", default="1").strip()
-        if raw == "0":
-            clear_screen()
-            return None
+        if raw == "0": clear_screen(); return None
         if raw.isdigit():
             i = int(raw)
-            if 1 <= i <= len(rows):
-                clear_screen(); return rows[i-1]
+            if 1 <= i <= len(rows): clear_screen(); return rows[i-1]
 
-# ───────────── main ─────────────
-def main() -> None:
-    splash()
-    section("Search Models", "Enter the retail code; I’ll normalize it automatically")
-    raw_model = Prompt.ask("[bold]Product model[/]", default="S8EG2A74MSB").strip().upper()
-    mcu = Prompt.ask("[bold]MCU version[/] (blank if unsure)", default="").strip()
+# ────────────────────────── Manual URL ──────────────────────────
+def manual_url_flow() -> None:
+    section("Manual URL", "Paste a direct firmware URL from ATOTO")
+    url = Prompt.ask("Direct URL (or leave blank to abort)", default="").strip()
+    if not url: section("Canceled"); return
+    title = url_leaf_name(url)
+    out_dir = Path("ATOTO_Firmware") / "manual"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / safe_filename(title)
+    section("Download Ready", f"Saving to: {out_path}\n\nPress Ctrl+C to cancel")
+    try:
+        download_with_progress(url, out_path)
+        section("Download Complete"); console.print(f"[green]Done![/] File saved:\n[bold]{out_path}[/]")
+    except KeyboardInterrupt:
+        section("Interrupted"); console.print("[yellow]Interrupted by user.[/]")
+    except Exception as e:
+        section("Download Failed"); console.print(f"[red]Download failed:[/] {e}")
 
-    cands = normalize_candidates(raw_model)
-    matched: List[Tuple[str, List[Dict[str, Any]]]] = []
+# ────────────────────────── Main lookup orchestration ──────────────────────────
+def try_lookup(model: str, mcu: str) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """Returns (merged_packages, hit_candidates_list)."""
+    cands = normalize_candidates(model)
+    matched_api: List[Tuple[str, List[Dict[str, Any]]]] = []
     hits_list: List[str] = []
 
+    # API first (aggregate across candidates)
     for cand in cands:
         section("Looking up Firmware (API)…", f"Trying: {cand}")
         pkgs = fetch_api_packages(cand, mcu)
         if pkgs:
-            matched.append((cand, pkgs))
+            # annotate source (defensive)
+            for p in pkgs:
+                p.setdefault("source", "API")
+            matched_api.append((cand, pkgs))
             hits_list.append(cand)
 
-    show_candidates("Normalization Results", cands.copy(), hits_list.copy())
+    merged: List[Dict[str, Any]] = []
+    for src, pkgs in matched_api:
+        for p in pkgs:
+            q = p.copy()
+            q["title"] = f"[{src}] {q['title']}"
+            merged.append(q)
 
-    if not matched:
-        base = cands[2] if len(cands) >= 3 else (cands[0] if cands else raw_model)
-        section("Trying Fallback Discovery…", f"Base: {base}")
-        pkgs, endpoint_used = discover_packages_via_json(base)
+    # JSON probe: try candidates in order, add the first hit list we find
+    if True:
+        for cand in cands:
+            section("Trying Fallback Discovery…", f"JSON probe: {cand}")
+            pkgs_json, endpoint_used = discover_packages_via_json(cand)
+            if pkgs_json:
+                # annotate title with endpoint/series hint
+                for p in pkgs_json:
+                    p["title"] = f"[{cand}] {p['title']}"
+                merged.extend(pkgs_json)
+                break
+
+    # Always offer mirrors for S8G2 family
+    fam = cands[0] if cands else model
+    mirror_pkgs = known_links_for_model(fam)
+    merged.extend(mirror_pkgs)
+
+    # De-dupe and number rows
+    merged = dedupe_rows(merged)
+    for i, p in enumerate(merged, 1):
+        p["id"] = str(i)
+        p.setdefault("source", "?")
+
+    return merged, hits_list
+
+def suggestions_menu(raw: str) -> Optional[str]:
+    suggs = build_suggestions(raw)
+    section("Did you mean…?", "Pick a nearby model to retry (M = Manual URL, 0 = cancel)")
+    table = Table(show_lines=False, header_style="bold magenta")
+    table.add_column("#"); table.add_column("Candidate")
+    for i, s in enumerate(suggs, 1):
+        table.add_row(str(i), s)
+    console.print(table)
+    ans = Prompt.ask("Select # / M for manual / 0 to cancel", default="1").strip().upper()
+    if ans == "0": return None
+    if ans == "M": manual_url_flow(); return None
+    if ans.isdigit():
+        i = int(ans)
+        if 1 <= i <= len(suggs): return suggs[i-1]
+    return None
+
+def main() -> None:
+    splash()
+    section("Search Models", "Enter retail code or device name; I’ll normalize it automatically")
+    raw_model = Prompt.ask("[bold]Product model / device name[/]", default="S8EG2A74MSB").strip().upper()
+    mcu = Prompt.ask("[bold]MCU version[/] (blank if unsure)", default="").strip()
+
+    pkgs, hits_list = try_lookup(raw_model, mcu)
+    show_candidates("Normalization Results", normalize_candidates(raw_model), hits_list)
+
+    if not pkgs:
+        section("No Packages Found",
+                "Could not find firmware via API/JSON/mirrors.\n"
+                "Tip: check the unit's About page for the exact model line or try Manual URL.")
+        cand = suggestions_menu(raw_model)
+        if not cand: return
+        pkgs, hits_list = try_lookup(cand, mcu)
         if not pkgs:
-            section("No Packages Found",
-                    "Could not find firmware via API or JSON probing.\n"
-                    "Tip: check the unit's About page for the exact model line.")
-            return
-        for i, p in enumerate(pkgs, 1):
-            p["id"] = str(i)
-        chosen = select_from_rows(pkgs, f"Available Packages (fallback via {endpoint_used})")
-    else:
-        merged: List[Dict[str, Any]] = []
-        for src, pkgs in matched:
-            for p in pkgs:
-                q = p.copy()
-                q["title"] = f"[{src}] {q['title']}"
-                merged.append(q)
-        for i, p in enumerate(merged, 1):
-            p["id"] = str(i)
-        chosen = select_from_rows(merged, "Available Packages (API)")
+            section("Still No Packages",
+                    f"Tried: {cand}\nYou can retry another suggestion or use Manual URL.")
+            cand2 = suggestions_menu(cand)
+            if not cand2: return
+            pkgs, hits_list = try_lookup(cand2, mcu)
+            if not pkgs:
+                section("No Packages Found", "Last attempt also failed. Try Manual URL from ATOTO.")
+                manual_url_flow()
+                return
 
+    chosen = select_from_rows(pkgs, "Available Packages")
     if not chosen:
         section("Canceled"); return
 
-    model_for_path = hits_list[0] if hits_list else raw_model
+    model_for_path = (hits_list[0] if hits_list else raw_model)
     out_dir = Path("ATOTO_Firmware") / safe_filename(model_for_path)
     out_dir.mkdir(parents=True, exist_ok=True)
-    filename = safe_filename(f"{model_for_path}_{chosen.get('version','NAv')}_{Path(chosen['url']).name}")
+    filename = safe_filename(f"{model_for_path}_{chosen.get('version','NAv')}_{url_leaf_name(chosen['url'])}")
     out_path = out_dir / filename
 
     section("Download Ready",
