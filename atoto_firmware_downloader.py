@@ -1,28 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-ATOTO Firmware Downloader — multi-source, resolution-aware
-
-What it does
-------------
-• Looks up firmware from multiple places at once:
-  1) Official "iBook" API endpoint
-  2) JSON index fallbacks (several likely layouts)
-  3) Known public mirrors (Aliyun atoto-usa bucket, etc.)
-• Accepts retail codes OR the on-device name (e.g., “ATL-S8-HU”).
-• Smart model normalization (EG2→G2, S01/S10 variants, etc.).
-• Shows ALL results (no filtering), adds columns:
-     Res  (guessed from file name/URL)
-     Fit  (✓ match, ⚠ mismatch, ? unknown)
-• Resumable downloads with progress + optional checksum verify.
-• Interactive TUI (Rich) and optional CLI flags.
+ATOTO Firmware Downloader — with Profiles & Menu
+- Multi-source lookup (ATOTO API, JSON fallbacks, curated mirrors)
+- Rich TUI with saved profiles (model/MCU/resolution/variant prefs)
+- Clear labeling: Universal vs Res-specific; Variant sharing (MS/PE/PM)
+- Resume downloads + optional checksum verify
 
 Install:  pip install requests rich
-Run:      python atoto_fw.py
-Flags:    python atoto_fw.py --model S8EG2A74MSB --mcu "YFEN_53..." --res 1280x720
-
-Author:   Eliminater74 + ChatGPT help
-License:  MIT
+Run:      python atoto_fw_menu.py
 """
 
 from __future__ import annotations
@@ -38,14 +24,15 @@ from rich.panel import Panel
 from rich.progress import (
     BarColumn, Progress, TextColumn, TimeRemainingColumn, TransferSpeedColumn
 )
-from rich.prompt import Prompt
+from rich.prompt import Prompt, Confirm
 from rich.table import Table
+from rich import box
 
 # ────────────────────────── Globals & session ──────────────────────────
 console = Console()
 BASE = "https://resources.myatoto.com/atoto-product-ibook/ibMobile"
 API_GET_IBOOK_LIST = f"{BASE}/getIbookList"
-UA = "ATOTO-Firmware-CLI/3.0"
+UA = "ATOTO-Firmware-CLI/3.1"
 
 def make_session() -> requests.Session:
     s = requests.Session()
@@ -63,16 +50,12 @@ def make_session() -> requests.Session:
 SESSION = make_session()
 
 # ────────────────────────── Known mirrors (curated) ──────────────────────────
-# These are public links ATOTO has used for S8 Gen2 UIS7862 (aka “6315”).
-# We do a HEAD ping and only show the ones that currently respond.
 KNOWN_LINKS: List[Dict[str, str]] = [
-    # 2025 roll-up (generic S8 Gen2 UIS7862)
     {
         "match": r"^(S8G2|S8EG2|ATL-S8).*$",
         "title": "S8 Gen2 (UIS7862 6315) — 2025-04-01 / 05-14",
         "url":   "https://atoto-usa.oss-us-west-1.aliyuncs.com/2025/FILE_UPLOAD_URL_2/85129692/6315-SYSTEM20250401-APP20250514.zip",
     },
-    # 2023 builds (both resolutions published)
     {
         "match": r"^(S8G2|S8EG2|ATL-S8).*$",
         "title": "S8 Gen2 (UIS7862 6315, 1024×600) — 2023-11-10 / 20",
@@ -87,18 +70,11 @@ KNOWN_LINKS: List[Dict[str, str]] = [
 
 # ────────────────────────── Retail→Canonical hints ──────────────────────────
 RETAIL_TO_CANONICAL: Dict[str, List[str]] = {
-    # S8 Gen2, 4GB+32GB bottom-keys “MS” family
     "S8EG2A74MSB": ["S8G2A74MS-S01", "S8G2A74MS-S10", "S8G2A74MS"],
     "ATL-S8-HU":   ["S8G2A74MS-S01", "S8G2A74MS-S10", "S8G2A74MS"],
-    # “B” side-keys “PM” family examples
     "S8EG2B74PMB": ["S8G2B74PM-S01", "S8G2B74PM-S10", "S8G2B74PM"],
-    # You can extend this table for A6G2/F7/P8, etc.
 }
-
-COMMON_VARIANTS = [
-    "-S01","-S10","-S01W","-S10W","-S01R","-S10R",
-    "S01","S10","S01W","S10W","S01R","S10R"
-]
+COMMON_VARIANTS = ["-S01","-S10","-S01W","-S10W","-S01R","-S10R","S01","S10","S01W","S10W","S01R","S10R"]
 
 # ────────────────────────── UI helpers ──────────────────────────
 def clear_screen() -> None:
@@ -148,21 +124,62 @@ def head_ok(url: str, timeout: int = 12) -> bool:
     except Exception:
         return False
 
-# ────────────────────────── Resolution helpers ──────────────────────────
+# ────────────────────────── Resolution & variant helpers ──────────────────────────
 def infer_resolution_from_name(s: str) -> str:
-    s = (s or "").lower().replace("×", "x").replace("_", "")
-    if "1024x600" in s or re.search(r"1024[^0-9]*600", s): return "1024x600"
-    if "1280x720" in s or "720x1280" in s or re.search(r"(1280[^0-9]*720|720[^0-9]*1280)", s): return "1280x720"
+    s = (s or "").lower().replace("×", "x")
+    if re.search(r"1024[^0-9]*600", s): return "1024x600"
+    if re.search(r"(1280[^0-9]*720|720[^0-9]*1280)", s): return "1280x720"
     return "?"
 
-def tag_rows_with_fit(rows: list, my_res: str) -> None:
+def detect_variants_from_text(s: str) -> List[str]:
+    # Very lightweight: look for MS / PE / PM tokens in title or URL
+    s = (s or "").upper()
+    found = set()
+    for token in ("MS","PE","PM"):
+        if re.search(rf"\b{token}\b", s) or re.search(rf"[-_\.]{token}[-_\.]", s):
+            found.add(token)
+    return sorted(found)
+
+def scope_from_res(res: str, title_url: str) -> str:
+    # "Universal" if we cannot infer res AND name hints generality; otherwise Res-specific
+    if res != "?": return "Res-specific"
+    hint = re.search(r"(universal|all[-_]?res|all[-_]?resolution|both[-_]?res|generic)", (title_url or "").lower())
+    return "Universal" if hint else "Universal?"
+
+def tag_rows(rows: list, my_res: str) -> None:
     my_res = (my_res or "").lower().replace("×", "x")
     for r in rows:
-        guess = infer_resolution_from_name(f"{r.get('title','')} {r.get('url','')}")
+        title_url = f"{r.get('title','')} {r.get('url','')}"
+        guess = infer_resolution_from_name(title_url)
         r["res"] = guess
+        r["scope"] = scope_from_res(guess, title_url)
+        r["variants"] = ",".join(detect_variants_from_text(title_url)) or "-"
         if guess == "?":    r["fit"] = "?"
         elif my_res and guess == my_res: r["fit"] = "✓"
         else:               r["fit"] = "⚠"
+
+def group_by_url(rows: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """
+    Group identical URLs to merge variant info. If multiple rows share a URL,
+    union their variant tags to show e.g. 'MS,PE' on the single line.
+    """
+    grouped: Dict[str, Dict[str, Any]] = {}
+    for r in rows:
+        u = (r.get("url") or "").strip()
+        g = grouped.get(u)
+        if not g:
+            grouped[u] = r.copy()
+        else:
+            # merge variants & prefer concrete res if any
+            v = set((g.get("variants","-") or "-").split(",")) | set((r.get("variants","-") or "-").split(","))
+            v.discard("-")
+            g["variants"] = ",".join(sorted(v)) if v else "-"
+            # res: if one is concrete and the other is '?', take the concrete
+            if g.get("res","?") == "?" and r.get("res","?") != "?": g["res"] = r["res"]
+            if g.get("fit","?") == "?" and r.get("fit","?") in ("✓","⚠"): g["fit"] = r["fit"]
+            # scope: if any says Res-specific, prefer that; else keep Universal/Universal?
+            if r.get("scope") == "Res-specific": g["scope"] = "Res-specific"
+    return grouped
 
 # ────────────────────────── Model normalization ──────────────────────────
 def normalize_candidates(raw: str) -> List[str]:
@@ -228,7 +245,6 @@ def fetch_api_packages(model: str, mcu_version: str = "") -> List[Dict[str, Any]
         data = r.json()
     except Exception:
         return []
-
     if not isinstance(data, dict): return []
     code = data.get("code") or data.get("status")
     if code not in (None, 0, "0", 200, "200"): return []
@@ -302,7 +318,6 @@ def discover_packages_via_json(model: str) -> Tuple[List[Dict[str, Any]], str]:
             data = fetch_json(u)
         except Exception:
             continue
-
         if isinstance(data, list): iterable = data
         elif isinstance(data, dict): iterable = data.get("packages") or data.get("firmware") or data.get("files") or []
         else: iterable = []
@@ -351,35 +366,57 @@ def dedupe_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         seen.add(key); out.append(r)
     return out
 
-def select_from_rows(rows: List[Dict[str, Any]], title: str, my_res: str) -> Optional[Dict[str, Any]]:
-    tag_rows_with_fit(rows, my_res)
+def select_from_rows(rows: List[Dict[str, Any]], title: str, my_res: str, prefer_universal: bool, want_variants: List[str]) -> Optional[Dict[str, Any]]:
+    # Tag & group
+    tag_rows(rows, my_res)
+    grouped = list(group_by_url(rows).values())
 
-    while True:
-        section(title, "Select a package to download (0 to cancel)")
-        if not rows:
-            console.print("[red]No results.[/]")
+    # Optional filtering by variant & scope preference
+    def row_ok(r: Dict[str,Any]) -> bool:
+        if prefer_universal and not r.get("scope","").startswith("Universal"):
+            return False
+        if want_variants and r.get("variants") not in ("-", ""):
+            row_vars = set(r["variants"].split(","))
+            if not (row_vars & set(want_variants)):
+                return False
+        return True
+
+    filt = [r for r in grouped if row_ok(r)]
+    if not filt: filt = grouped  # fallback to all if filter wipes list
+
+    # Explainer panel
+    section(title, "Universal = package not tied to a specific display resolution. Res-specific = explicit 1024×600 or 1280×720.")
+    console.print(Panel.fit(
+        "[bold]Tip[/]: Prefer Universal packages for the same device family; use Res-specific only when a package explicitly targets your screen.\n"
+        f"[dim]Profile Fit targets: {my_res or '?'}; Variant prefs: {', '.join(want_variants) if want_variants else 'ANY'}; Scope: {'Universal preferred' if prefer_universal else 'Show all'}[/]",
+        border_style="cyan"
+    ))
+
+    # Render table
+    table = Table(title="Available Packages", show_lines=False, header_style="bold magenta", box=box.SIMPLE_HEAVY)
+    cols = [("id","#"),("source","Src"),("title","Title"),("version","Ver"),
+            ("date","Date"),("size","Size"),("res","Res"),("scope","Scope"),
+            ("variants","Variants"),("fit","Fit"),("url","URL")]
+    for _, hdr in cols: table.add_column(hdr, overflow="fold")
+    for idx, r in enumerate(filt, 1):
+        r_view = r.copy(); r_view["id"] = str(idx)
+        r_view["size"] = human_size(r.get("size"))
+        table.add_row(*[str(r_view.get(k, "")) for k,_ in cols])
+    console.print(table)
+
+    # selection
+    default_pick = "1" if filt else "0"
+    raw = Prompt.ask("Select # (0 to cancel)", default=default_pick).strip()
+    if raw == "0" or not raw.isdigit(): clear_screen(); return None
+    i = int(raw); 
+    if not (1 <= i <= len(filt)): return None
+    chosen = filt[i-1]
+    if chosen.get("fit") == "⚠":
+        console.print(f"[yellow]Heads-up:[/] package looks like [bold]{chosen.get('res','?')}[/], "
+                      f"your profile is [bold]{my_res}[/].")
+        if not Confirm.ask("Continue anyway?", default=False):
             return None
-
-        table = Table(title=title, show_lines=False, header_style="bold magenta")
-        cols = [("id","#"),("source","Source"),("title","Title"),("version","Version"),
-                ("date","Date"),("size","Size"),("res","Res"),("fit","Fit"),("url","URL")]
-        for _, hdr in cols: table.add_column(hdr, overflow="fold")
-        for r in rows:
-            table.add_row(*[str(r.get(k, "")) for k,_ in cols])
-        console.print(table)
-
-        raw = Prompt.ask("Select #", default="1").strip()
-        if raw == "0": clear_screen(); return None
-        if raw.isdigit():
-            i = int(raw)
-            if 1 <= i <= len(rows):
-                chosen = rows[i-1]
-                if chosen.get("fit") == "⚠":
-                    console.print(f"[yellow]Heads-up:[/] package looks like [bold]{chosen.get('res','?')}[/], "
-                                  f"your device is set to [bold]{my_res}[/].")
-                    if Prompt.ask("Continue anyway? (y/N)", default="N").strip().lower() != "y":
-                        continue
-                clear_screen(); return chosen
+    clear_screen(); return chosen
 
 # ────────────────────────── Download ──────────────────────────
 def sha256_file(path: Path) -> str:
@@ -425,7 +462,7 @@ def download_with_progress(url: str, out_path: Path, expected_hash: str = "") ->
         if algo == "sha256":
             digest = sha256_file(out_path)
         elif algo == "sha1":
-            h = hashlib.sha1()
+            h = hashlib.sha1(); 
             with out_path.open("rb") as f:
                 for chunk in iter(lambda: f.read(1024 * 1024), b""): h.update(chunk)
             digest = h.hexdigest()
@@ -442,7 +479,7 @@ def download_with_progress(url: str, out_path: Path, expected_hash: str = "") ->
 # ────────────────────────── Orchestration ──────────────────────────
 def show_candidates(title: str, tried: List[str], hits: List[str]) -> None:
     section(title, "Auto-normalized inputs and which matched the API")
-    tbl = Table(show_lines=False, header_style="bold magenta")
+    tbl = Table(show_lines=False, header_style="bold magenta", box=box.SIMPLE_HEAVY)
     tbl.add_column("Tried", overflow="fold"); tbl.add_column("Matched", overflow="fold")
     L = max(len(tried), len(hits))
     tried += [""]*(L-len(tried)); hits += [""]*(L-len(hits))
@@ -460,7 +497,6 @@ def try_lookup(model: str, mcu: str) -> Tuple[List[Dict[str, Any]], List[str]]:
 
     # API across candidates
     for cand in cands:
-        section("Looking up Firmware (API)…", f"Trying: {cand}")
         pkgs = fetch_api_packages(cand, mcu)
         if pkgs:
             for p in pkgs: p.setdefault("source", "API")
@@ -471,14 +507,12 @@ def try_lookup(model: str, mcu: str) -> Tuple[List[Dict[str, Any]], List[str]]:
 
     # JSON probe (first successful endpoint per normalized list)
     for cand in cands:
-        section("Trying Fallback Discovery…", f"JSON probe: {cand}")
         pkgs_json, endpoint = discover_packages_via_json(cand)
         if pkgs_json:
             for p in pkgs_json: p["title"] = f"[{cand}] {p['title']}"
             merged.extend(pkgs_json)
             break
 
-    # Known mirrors (always offered for this family)
     merged.extend(known_links_block(cands[0] if cands else model))
 
     merged = dedupe_rows(merged)
@@ -486,87 +520,110 @@ def try_lookup(model: str, mcu: str) -> Tuple[List[Dict[str, Any]], List[str]]:
         p["id"] = str(i); p.setdefault("source","?")
     return merged, hits
 
-def suggestions_menu(raw: str) -> Optional[str]:
-    suggs = build_suggestions(raw)
-    section("Did you mean…?", "Pick a nearby model to retry (M = Manual URL, 0 = cancel)")
-    table = Table(show_lines=False, header_style="bold magenta")
-    table.add_column("#"); table.add_column("Candidate")
-    for i, s in enumerate(suggs, 1): table.add_row(str(i), s)
-    console.print(table)
-    ans = Prompt.ask("Select # / M for manual / 0 to cancel", default="1").strip().upper()
-    if ans == "0": return None
-    if ans == "M": manual_url_flow(); return None
-    if ans.isdigit():
-        i = int(ans)
-        if 1 <= i <= len(suggs): return suggs[i-1]
-    return None
+# ────────────────────────── Profiles (persisted) ──────────────────────────
+def config_dir() -> Path:
+    if os.name == "nt":
+        base = Path(os.environ.get("APPDATA", Path.home() / "AppData/Roaming"))
+        return base / "ATOTO_Firmware"
+    return Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "atoto_fw"
 
-# ────────────────────────── Manual URL ──────────────────────────
-def manual_url_flow(download_dir: Path = Path("ATOTO_Firmware")/ "manual") -> None:
-    section("Manual URL", "Paste a direct firmware URL from ATOTO")
-    url = Prompt.ask("Direct URL (or leave blank to abort)", default="").strip()
-    if not url: section("Canceled"); return
-    download_dir.mkdir(parents=True, exist_ok=True)
-    out = download_dir / safe_filename(url_leaf_name(url))
-    section("Download Ready", f"Saving to: {out}\n\nPress Ctrl+C to cancel")
-    try:
-        download_with_progress(url, out)
-        section("Download Complete"); console.print(f"[green]Done![/] File saved:\n[bold]{out}[/]")
-    except KeyboardInterrupt:
-        section("Interrupted"); console.print("[yellow]Interrupted by user.[/]")
-    except Exception as e:
-        section("Download Failed"); console.print(f"[red]Download failed:[/] {e}")
+def config_path() -> Path:
+    d = config_dir(); d.mkdir(parents=True, exist_ok=True)
+    return d / "config.json"
 
-# ────────────────────────── CLI & main ──────────────────────────
-def parse_args() -> argparse.Namespace:
-    ap = argparse.ArgumentParser(description="ATOTO firmware downloader (multi-source)")
-    ap.add_argument("--model", help="Retail model or device name (e.g., S8EG2A74MSB or ATL-S8-HU)")
-    ap.add_argument("--mcu",   help="MCU version string (optional)")
-    ap.add_argument("--res",   default="1280x720",
-                    help="Your screen resolution for Fit check (default: 1280x720)")
-    ap.add_argument("--out",   default="ATOTO_Firmware", help="Output directory (default: ATOTO_Firmware)")
-    ap.add_argument("--manual", action="store_true", help="Open manual-URL downloader and exit")
-    return ap.parse_args()
+def load_cfg() -> Dict[str, Any]:
+    p = config_path()
+    if p.exists():
+        try: return json.loads(p.read_text(encoding="utf-8"))
+        except Exception: pass
+    return {"profiles": {}, "last_profile": ""}
 
-def main() -> None:
-    args = parse_args()
-    if args.manual:
-        manual_url_flow(Path(args.out)/"manual")
-        return
+def save_cfg(cfg: Dict[str, Any]) -> None:
+    config_path().write_text(json.dumps(cfg, indent=2), encoding="utf-8")
 
-    section("ATOTO Firmware Downloader", "Multi-source lookup · shows everything · warns on mismatch")
+def prompt_profile(existing: Optional[Dict[str,Any]]=None) -> Dict[str,Any]:
+    console.print(Panel.fit("Create / Edit Profile", border_style="cyan"))
+    prof = dict(existing or {})
+    prof["name"] = Prompt.ask("Profile name", default=prof.get("name","My S8"))
+    prof["model"] = Prompt.ask("Model / Device name", default=prof.get("model","S8EG2A74MSB")).upper().strip()
+    prof["mcu"] = Prompt.ask("MCU version (blank if unknown)", default=prof.get("mcu","")).strip()
+    prof["res"] = Prompt.ask("Display resolution", default=prof.get("res","1280x720")).strip()
+    # Variant prefs: comma list, or ANY
+    vdefault = prof.get("variants","ANY")
+    v = Prompt.ask("Variant prefs (MS,PE,PM or ANY)", default=vdefault).upper().replace(" ","")
+    if v == "" or v == "ANY": prof["variants"] = "ANY"
+    else:
+        keep = [t for t in v.split(",") if t in ("MS","PE","PM")]
+        prof["variants"] = ",".join(sorted(set(keep))) if keep else "ANY"
+    prof["prefer_universal"] = Confirm.ask("Prefer Universal packages?", default=bool(prof.get("prefer_universal", True)))
+    return prof
 
-    raw_model = args.model or Prompt.ask("[bold]Product model / device name[/]", default="S8EG2A74MSB").strip().upper()
-    mcu       = (args.mcu or Prompt.ask("[bold]MCU version[/] (blank if unsure)", default="")).strip()
-    my_res    = (args.res or "1280x720").strip() or "1280x720"
+def profile_menu(cfg: Dict[str,Any]) -> Optional[Dict[str,Any]]:
+    while True:
+        section("Profiles", f"Config file: {config_path()}")
+        tbl = Table(show_lines=False, header_style="bold magenta", box=box.SIMPLE_HEAVY)
+        tbl.add_column("#"); tbl.add_column("Name"); tbl.add_column("Model"); tbl.add_column("MCU"); tbl.add_column("Res"); tbl.add_column("Variants"); tbl.add_column("Universal?")
+        names = sorted(cfg["profiles"].keys())
+        for i, name in enumerate(names, 1):
+            p = cfg["profiles"][name]
+            tbl.add_row(str(i), name, p.get("model",""), p.get("mcu",""), p.get("res",""),
+                        p.get("variants","ANY"), "Yes" if p.get("prefer_universal",True) else "No")
+        console.print(tbl)
+        console.print("[dim]A=Add  E=Edit  D=Delete  S=Select default  Q=Back[/]")
+        ans = Prompt.ask("Action", default="S").strip().upper()
+        if ans == "Q": return None
+        if ans == "A":
+            p = prompt_profile({})
+            cfg["profiles"][p["name"]] = p
+            save_cfg(cfg)
+        elif ans == "E" and names:
+            idx = Prompt.ask("Edit #", default="1").strip()
+            if idx.isdigit() and 1 <= int(idx) <= len(names):
+                name = names[int(idx)-1]
+                p = prompt_profile(cfg["profiles"][name])
+                # If renamed, handle key move
+                if p["name"] != name:
+                    del cfg["profiles"][name]
+                cfg["profiles"][p["name"]] = p
+                save_cfg(cfg)
+        elif ans == "D" and names:
+            idx = Prompt.ask("Delete #", default="1").strip()
+            if idx.isdigit() and 1 <= int(idx) <= len(names):
+                name = names[int(idx)-1]
+                if Confirm.ask(f"Delete profile '{name}'?", default=False):
+                    del cfg["profiles"][name]
+                    if cfg.get("last_profile") == name: cfg["last_profile"] = ""
+                    save_cfg(cfg)
+        elif ans == "S" and names:
+            idx = Prompt.ask("Select # as default", default="1").strip()
+            if idx.isdigit() and 1 <= int(idx) <= len(names):
+                name = names[int(idx)-1]
+                cfg["last_profile"] = name
+                save_cfg(cfg)
+                return cfg["profiles"][name]
 
-    pkgs, hits = try_lookup(raw_model, mcu)
-    show_candidates("Normalization Results", normalize_candidates(raw_model), hits)
+def run_search_download_flow(profile: Dict[str,Any], out_base: Path) -> None:
+    model = profile.get("model","").strip() or Prompt.ask("Model / Device", default="S8EG2A74MSB").strip()
+    mcu   = profile.get("mcu","").strip()
+    my_res = profile.get("res","1280x720").strip()
+    variants_pref = [] if profile.get("variants","ANY") == "ANY" else profile.get("variants","ANY").split(",")
+    prefer_universal = bool(profile.get("prefer_universal", True))
+
+    pkgs, hits = try_lookup(model, mcu)
+    show_candidates("Normalization Results", normalize_candidates(model), hits)
 
     if not pkgs:
         section("No Packages Found",
-                "Could not find firmware via API/JSON/mirrors.\n"
-                "Tip: verify the exact model line on the unit, or try Manual URL.")
-        cand = suggestions_menu(raw_model)
-        if not cand: return
-        pkgs, hits = try_lookup(cand, mcu)
-        if not pkgs:
-            section("Still No Packages",
-                    f"Tried: {cand}\nYou can retry another suggestion or use Manual URL.")
-            cand2 = suggestions_menu(cand)
-            if not cand2: return
-            pkgs, hits = try_lookup(cand2, mcu)
-            if not pkgs:
-                section("No Packages Found", "Last attempt also failed. Try Manual URL from ATOTO.")
-                manual_url_flow(Path(args.out)/"manual")
-                return
+                "Could not find firmware via API/JSON/mirrors.\nUse Manual URL or adjust the model.")
+        return
 
-    chosen = select_from_rows(pkgs, "Available Packages", my_res)
+    chosen = select_from_rows(pkgs, "Firmware Results", my_res, prefer_universal, variants_pref)
     if not chosen:
-        section("Canceled"); return
+        section("Canceled")
+        return
 
-    model_for_path = (hits[0] if hits else raw_model)
-    out_dir = Path(args.out) / safe_filename(model_for_path)
+    model_for_path = (hits[0] if hits else model)
+    out_dir = out_base / safe_filename(model_for_path)
     out_dir.mkdir(parents=True, exist_ok=True)
     filename = safe_filename(f"{model_for_path}_{chosen.get('version','NAv')}_{url_leaf_name(chosen['url'])}")
     out_path = out_dir / filename
@@ -581,6 +638,78 @@ def main() -> None:
         section("Interrupted"); console.print("[yellow]Interrupted by user.[/]")
     except Exception as e:
         section("Download Failed"); console.print(f"[red]Download failed:[/] {e}")
+
+# ────────────────────────── Manual URL ──────────────────────────
+def manual_url_flow(download_dir: Path) -> None:
+    section("Manual URL", "Paste a direct firmware URL from ATOTO")
+    url = Prompt.ask("Direct URL (or leave blank to abort)", default="").strip()
+    if not url:
+        section("Canceled"); return
+    download_dir.mkdir(parents=True, exist_ok=True)
+    out = download_dir / safe_filename(url_leaf_name(url))
+    section("Download Ready", f"Saving to: {out}\n\nPress Ctrl+C to cancel")
+    try:
+        download_with_progress(url, out)
+        section("Download Complete"); console.print(f"[green]Done![/] File saved:\n[bold]{out}[/]")
+    except KeyboardInterrupt:
+        section("Interrupted"); console.print("[yellow]Interrupted by user.[/]")
+    except Exception as e:
+        section("Download Failed"); console.print(f"[red]Download failed:[/] {e}")
+
+# ────────────────────────── Main menu ──────────────────────────
+def main_menu(out_dir: Path) -> None:
+    cfg = load_cfg()
+    while True:
+        default_name = cfg.get("last_profile") or "(none)"
+        section("ATOTO Firmware Downloader",
+                f"Default profile: [bold]{default_name}[/]\nConfig: {config_path()}")
+        console.print(
+            "[1] Quick Search (use default profile)\n"
+            "[2] Profiles (create/edit/select)\n"
+            "[3] Ad-hoc Search (don’t save)\n"
+            "[4] Manual URL Download\n"
+            "[5] Settings / Info\n"
+            "[0] Exit"
+        )
+        ans = Prompt.ask("Select", default="1").strip()
+        if ans == "0":
+            clear_screen(); return
+        elif ans == "1":
+            name = cfg.get("last_profile","")
+            if name and name in cfg["profiles"]:
+                run_search_download_flow(cfg["profiles"][name], out_dir)
+            else:
+                console.print("[yellow]No default profile set. Opening Profiles…[/]")
+                p = profile_menu(cfg)
+                if p: run_search_download_flow(p, out_dir)
+        elif ans == "2":
+            p = profile_menu(cfg)
+            if p and Confirm.ask("Run Quick Search with this profile now?", default=True):
+                run_search_download_flow(p, out_dir)
+        elif ans == "3":
+            p = prompt_profile({})
+            run_search_download_flow(p, out_dir)
+        elif ans == "4":
+            manual_url_flow(out_dir / "manual")
+        elif ans == "5":
+            section("Settings / Info", f"Config: {config_path()}\nOutput: {out_dir}")
+            console.print("[dim]Nothing else here yet. Future: proxy, mirrors toggle, cache clear.[/]")
+            Confirm.ask("Back", default=True)
+
+# ────────────────────────── CLI wrapper ──────────────────────────
+def parse_args() -> argparse.Namespace:
+    ap = argparse.ArgumentParser(description="ATOTO firmware downloader (menu + profiles)")
+    ap.add_argument("--out",   default="ATOTO_Firmware", help="Output directory (default: ATOTO_Firmware)")
+    ap.add_argument("--manual", action="store_true", help="Open manual-URL downloader and exit")
+    return ap.parse_args()
+
+def main() -> None:
+    args = parse_args()
+    out_dir = Path(args.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    if args.manual:
+        manual_url_flow(out_dir / "manual"); return
+    main_menu(out_dir)
 
 if __name__ == "__main__":
     try:
