@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "atoto-fw"
+version = "0.1.0"
+description = "ATOTO Firmware Downloader (menu + profiles)"
+authors = [{name = "Eliminater74"}, {name = "ChatGPT helper"}]
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+  "requests>=2.31",
+  "rich>=13.7",
+]
+
+[project.scripts]
+atoto-fw = "atoto_fw.cli:main"

@@ -10,7 +10,7 @@ UI layer for ATOTO Firmware Downloader
 """
 
 from __future__ import annotations
-import os, json, re
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -32,33 +32,13 @@ from .core import (
     group_by_url,
     human_size,
     sha256_file,
-    url_leaf_name,  # used for output filename
+    load_cfg,
+    save_cfg,
+    config_path,
 )
+from .core.utils import url_leaf_name  # leaf filename helper
 
 console = Console()
-
-# ────────────────────────── Paths & config ──────────────────────────
-def config_dir() -> Path:
-    if os.name == "nt":
-        base = Path(os.environ.get("APPDATA", Path.home() / "AppData/Roaming"))
-        return base / "ATOTO_Firmware"
-    return Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "atoto_fw"
-
-def config_path() -> Path:
-    d = config_dir(); d.mkdir(parents=True, exist_ok=True)
-    return d / "config.json"
-
-def load_cfg() -> Dict[str, Any]:
-    p = config_path()
-    if p.exists():
-        try:
-            return json.loads(p.read_text(encoding="utf-8"))
-        except Exception:
-            pass
-    return {"profiles": {}, "last_profile": "", "verbose": False}
-
-def save_cfg(cfg: Dict[str, Any]) -> None:
-    config_path().write_text(json.dumps(cfg, indent=2), encoding="utf-8")
 
 # ────────────────────────── UI helpers ──────────────────────────
 def clear_screen() -> None:
@@ -166,8 +146,7 @@ def render_and_pick(
     # annotate & merge
     tag_rows(rows, my_res)
     grouped = group_by_url(rows)
-    # be robust if core returns dict
-    if isinstance(grouped, dict):
+    if isinstance(grouped, dict):  # robustness if backend returns a dict someday
         grouped = list(grouped.values())
 
     def row_ok(r: Dict[str, Any]) -> bool:
@@ -318,7 +297,6 @@ def run_search_download_flow(profile: Dict[str, Any], out_base: Path, verbose: b
 
     with Status("[bold]Searching firmware…[/] starting", console=console, spinner="dots") as status:
         def progress_cb(msg: str):
-            # Show progress in the spinner; optionally echo to log when verbose
             status.update(f"[bold]Searching firmware…[/] {msg}")
             if verbose:
                 console.log(msg)
