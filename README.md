@@ -1,55 +1,87 @@
 # ⚡ ATOTO Firmware Downloader
 
-[![Python](https://img.shields.io/badge/Python-3.9%2B-3776ab.svg)](https://www.python.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-brightgreen.svg)](LICENSE)
-[![Stars](https://img.shields.io/github/stars/Eliminater74/atoto_firmware_downloader.svg?style=social)](https://github.com/Eliminater74/atoto_firmware_downloader/stargazers)
-![Repo visits (simple)](https://visitor-badge.laobi.icu/badge?page_id=Eliminater74.atoto_firmware_downloader)
-![Daily views](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/Eliminater74/atoto_firmware_downloader/main/.github/badges/daily.json)
-![Total views](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/Eliminater74/atoto_firmware_downloader/main/.github/badges/total.json)
+Fetch official **ATOTO head-unit firmware** from ATOTO’s infrastructure without fighting the website.
+The tool probes **multiple official sources** (API + JSON indexes) and curated **public mirrors**, merges everything, and lets you download with resume & optional checksum verify.
 
-A modern, streamlined tool to fetch **ATOTO head-unit firmware** directly from ATOTO’s infrastructure — without fighting the website.
-
-The downloader queries **multiple official sources** (API + JSON indexes) and also checks **known public mirrors**. Everything is merged into a single table with source labels so you can pick and download in one step.
-
-> ✅ Works for **most ATOTO models** (S8, A6, F7, P8, etc.) **as long as ATOTO has published firmware online** for that model line.  
-> 🔗 If your unit’s firmware is only available via a **private/signed link**, use **Manual URL** mode.
+> ✅ Works for most ATOTO families (S8, A6, F7, P8, …) **provided ATOTO has published the firmware online**.
+> 🔗 If support sends you a private time-limited link, use **Manual URL** mode.
 
 ---
 
-## ✨ Highlights
+## Branches at a glance
 
-- **Multi-source discovery** → Official API ➝ JSON index fallbacks ➝ known mirrors (Aliyun *atoto-usa* bucket).
-- **Model normalization & mapping** → Retail/device names like `S8EG2A74MSB` or `ATL-S8-HU` are translated to canonical keys (e.g., `S8G2A74MS-S01/-S10`) to improve hits.
-- **Shows everything (no filtering)** → One table with `Source=API / JSON / MIRROR`, de-duplicated.
-- **Resolution awareness** → Adds **Res** (guessed from file/URL) and **Fit** (✓ likely match, ⚠ mismatch, ? unknown). Nothing is hidden—just a heads-up.
-- **Resumable downloads** + optional **checksum verification**.
-- **Manual URL mode** → Paste a direct `file.myatoto.com` link (e.g., from ATOTO support).
+| Branch                   | Purpose                                                                                                           | Stability                | Who should use it?                                                             |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------- | ------------------------ | ------------------------------------------------------------------------------ |
+| **main** (a.k.a. master) | Stable, single-file style app focused on download + simple discovery                                              | Highest                  | Regular users who just want to grab firmware reliably                          |
+| **beta**                 | Actively developed, **modular** CLI with **profiles, menu UI**, progress status, variant awareness, and packaging | Fast-moving (but tested) | Power users and contributors; anyone who wants the best UX and newest features |
+
+### What’s different in **beta**?
+
+* **Modular package layout** (`atoto_fw/…`), so we can grow (e.g., extractors/add-ons) without turning one file into a hairball.
+* **Profiles + Menu UI (Rich TUI)**
+  Save multiple head-units with **model**, **MCU**, **resolution**, **variant prefs (MS/PE/PM)**, and **“prefer universal”** toggle. Pick a default and run **Quick Search** in one keystroke.
+* **Clear “Universal vs Res-specific” labeling**
+  We infer **Res** from filenames/URLs and show **Fit** (✓ likely match, ⚠ mismatch, ? unknown). We also mark “Universal” packages and **prefer them** when you ask us to.
+* **Variant awareness & merging**
+  If a URL serves the **same package** across **MS/PE/PM**, the table shows combined variants (e.g., `MS,PE`) so users see sharing across model codes (like your `S8G2A7PE` ↔ **MS** case).
+* **Live status while searching**
+  No more “dead air”: a spinner updates with **API probe → JSON probe N → mirrors**, so you always see progress.
+* **Known mirrors included**
+  Curated Aliyun `atoto-usa` mirror links (when reachable) appear as `Source=MIRROR`. Easy to extend.
+* **Packaging / console entry point**
+  Optional `pyproject.toml` with `console_scripts` so users can run `atoto-fw` from anywhere after `pip install -e .`.
+* **Verbose logging** (toggle from the Settings panel or with `-v`): helpful for diagnostics.
+* **Config separation**
+  Config (profiles, defaults, verbosity) is stored in a standard path:
+
+  * Windows: `%APPDATA%\ATOTO_Firmware\config.json`
+  * Linux: `~/.config/atoto_fw/config.json`
 
 ---
 
-## 🧭 Compatibility
+## ✨ Features (beta)
 
-Enter **any** of the following—the tool will try the right firmware keys:
+* **Multi-source discovery**
 
-- Retail box codes (e.g., `S8EG2A74MSB`, `S8EG2B74PMB`)
-- Canonical models (e.g., `S8G2A74MS-S01`, `S8G2B74PM`)
-- Device names shown in *About* (e.g., `ATL-S8-HU`)
-- Family shorthand (e.g., `S8G2A7`, `S8G2B7`)
-
-If ATOTO exposes firmware for your model/family via their API/JSON or public mirrors, the script will surface it. If your package is **only** a private signed URL, use **Manual URL**.
+  1. Official API
+  2. Official JSON index fallbacks (multiple likely layouts)
+  3. **Known mirrors** (only shown if reachable)
+* **Model normalization & mapping**
+  Retail/device names like `S8EG2A74MSB`, `ATL-S8-HU`, `S8G2A7PE` are expanded to canonical candidates (e.g., `S8G2A74MS-S01/-S10`) to maximize API/JSON hits.
+* **Everything visible (no silent filtering)**
+  One de-duplicated table with **Source**, **Res**, **Fit**, **Variants**, **Scope (Universal/Res-specific)**.
+* **Resumable downloads** with progress bar + **optional checksum verification** (sha256/sha1/md5).
+* **Manual URL mode** for private/time-limited ATOTO links.
 
 ---
 
-## 📦 Requirements
+## 📦 Install
 
-- Python **3.9+**
-- Install dependencies:
-  ```bash
-  pip install -r requirements.txt
-  # or:
-  pip install requests rich
+> Python **3.9+** recommended.
 
-**requirements.txt**
+### Option A — Local, editable install (recommended for beta)
+
+```bash
+# from repo root (beta branch)
+pip install -e .
+```
+
+Now you can run:
+
+```bash
+atoto-fw          # console entry
+# or
+python -m atoto_fw.cli
+```
+
+### Option B — Just run the script (no install)
+
+```bash
+# classic one-off run
+python atoto_firmware_downloader.py
+```
+
+### Requirements
 
 ```txt
 requests>=2.31
@@ -58,38 +90,41 @@ rich>=13.7
 
 ---
 
-## 🚀 Quick Start (interactive)
+## 🚀 Quick start
 
 ```bash
-python atoto_firmware_downloader.py
+atoto-fw
+# or
+python -m atoto_fw.cli
 ```
 
-You’ll be asked for:
+* Create/select a **Profile** (`Model`, optional **MCU**, **Res**, **Variants**, “Prefer Universal”).
+* Choose **Quick Search** to probe API → JSON → mirrors with live status.
+* Pick a package and download (resume supported).
 
-* **Product model / device name** (e.g., `S8EG2A74MSB`, `S8G2A7`, `ATL-S8-HU`)
-* **MCU version** (optional but can improve API matches)
-* **Screen resolution** (defaults to `1280x720`; use `1024x600` if your unit is 600p)
+**Tip:** your model can be any of:
 
-The tool:
-
-1. Normalizes your input into several likely firmware keys.
-2. Queries the **official API**, then JSON fallbacks, then **known mirrors**.
-3. Merges results into one table (`Source`, `Res`, `Fit`).
-4. Lets you pick a package to download (resumable; optional checksum).
+* Retail box code (e.g., `S8EG2A74MSB`, `S8EG2B74PMB`)
+* Canonical model (e.g., `S8G2A74MS-S01`, `S8G2B74PM`)
+* Device name (`ATL-S8-HU`)
+* Family shorthand (`S8G2A7`, `S8G2B7`)
 
 ---
 
-## ⚙️ CLI flags (convenience)
+## 🧭 CLI flags
 
 ```bash
 # Typical run
-python atoto_firmware_downloader.py --model "S8EG2A74MSB" --mcu "YFEN_53_L6315" --res 1280x720
+atoto-fw --model "S8EG2A74MSB" --mcu "YFEN_53_L6315" --res 1280x720
 
 # Choose output folder
-python atoto_firmware_downloader.py --model "ATL-S8-HU" --out "./downloads"
+atoto-fw --model "ATL-S8-HU" --out "./downloads"
 
 # Manual URL mode (paste a direct link)
-python atoto_firmware_downloader.py --manual
+atoto-fw --manual
+
+# Verbose logs (beta)
+atoto-fw -v
 ```
 
 **Flags**
@@ -99,98 +134,143 @@ python atoto_firmware_downloader.py --manual
 * `--res`    Screen resolution for Fit check (`1280x720` or `1024x600`).
 * `--out`    Output directory (default: `ATOTO_Firmware`).
 * `--manual` Open Manual URL downloader.
+* `-v/--verbose` Enable debug logging (beta).
 
 ---
 
-## 🖥️ Example (table view)
+## 🖥️ What you’ll see
 
 ```
 Available Packages
-──────────────────────────────────────────────────────────────────────────────────────────────
-#  Source  Title                                                Version   Res      Fit  URL
-1  API     [S8G2A74MS-S01] 6315-SYSTEM20250401-APP20250514.zip  6315…     1280x720 ✓    …
-2  JSON    [S8G2A74MS] system_20231110_app_20231120.zip         6315…     1024x600 ⚠    …
-3  MIRROR  [mirror] S8 Gen2 (UIS7862 6315) — 2025-04/05         6315…     1280x720 ✓    …
-4  MIRROR  [mirror] S8 Gen2 (1024×600) — 2023-11/20             6315…     1024x600 ⚠    …
-──────────────────────────────────────────────────────────────────────────────────────────────
+────────────────────────────────────────────────────────────────────────────────────────────────────────
+#  Src     Title                                       Ver     Date     Size   Res      Scope       Variants  Fit  URL
+1  MIRROR  S8 Gen2 (UIS7862 6315) — 2025-04/05         6315…   …        …      1280x720 Universal   MS,PE     ✓    …
+2  JSON    [S8G2A74MS] system_20231110_app_20231120…   6315…   …        …      1024x600 Res-specific PM        ⚠    …
+…
 ```
 
-> **Fit** is advisory (✓/⚠/?) so you don’t flash the wrong resolution.
+* **Res** and **Fit** help you avoid flashing the wrong screen resolution.
+* **Variants** shows MS/PE/PM sharing when a single URL applies to multiple model codes.
+* **Scope** highlights **Universal** (not tied to 600p/720p) vs **Res-specific** packages.
 
 ---
 
-## 🔭 Where it looks
+## 🔭 Sources we probe
 
 1. **Official API**
    `https://resources.myatoto.com/atoto-product-ibook/ibMobile/getIbookList`
+
 2. **Official JSON endpoints**
-   Several patterns under `…/ibMobile/…` are probed automatically.
-3. **Known mirrors** *(listed only if reachable; easy to extend)*
+   Multiple predictable layouts under `…/ibMobile/…` (beta probes a list of candidates and picks the first that responds).
 
-   * `https://atoto-usa.oss-us-west-1.aliyuncs.com/2025/FILE_UPLOAD_URL_2/85129692/6315-SYSTEM20250401-APP20250514.zip`
-   * `https://atoto-usa.oss-us-west-1.aliyuncs.com/2023/FILE_UPLOAD_URL_2/03850677/6315_1024x600_system231110_app_231120.zip`
-   * `https://atoto-usa.oss-us-west-1.aliyuncs.com/2023/FILE_UPLOAD_URL_2/03850677/6315_1280x720_system231110_app_231120.zip`
-
-Have another working mirror? Add it in `KNOWN_LINKS` (pattern + URL) and it’ll show up as `Source=MIRROR`.
+3. **Curated mirrors** *(Aliyun atoto-usa)*
+   Shown only when reachable; easily extend `KNOWN_LINKS` to add more.
 
 ---
 
-## 📥 Download location
-
-Files are saved to:
+## 📥 Where downloads go
 
 ```
 ATOTO_Firmware/<best-match-model>/<model>_<version>_<original-filename>.zip
 ```
 
 * Downloads **resume** if interrupted.
-* If ATOTO publishes a **checksum**, it’s verified after download.
+* If a checksum is provided, we verify it after download.
 
 ---
 
-## 🧰 Updating on the unit (general guidance)
+## 🧰 Updating on your unit (general guidance)
 
-Many ATOTO units accept an **offline USB update**:
+Most ATOTO units accept **offline USB update**:
 
-1. Format a USB drive **FAT32**; place the **ZIP** at the root (do **not** unzip).
-2. Plug into the recommended USB port (often **USB1**, the Android Auto/data port).
-3. Enter the **Factory/Service menu** (varies by model; common code is **3368**).
-4. Choose **Update** (e.g., “DVD/System Update”) and select the ZIP.
-5. Keep stable power (engine running / proper 12 V). **Do not** power off mid-update.
+1. Format USB **FAT32**, copy the **ZIP** to the root (do **not** unzip).
+2. Use the recommended port (commonly **USB1**, the Android Auto/data port).
+3. Enter the **Factory/Service menu** (code often **3368**).
+4. Choose **Update** and select the ZIP.
+5. Ensure **stable power** (engine running / proper 12 V). Don’t power off mid-update.
 
-> Follow ATOTO’s instructions for your specific model/firmware.
-
----
-
-## ⚠️ Safety notes
-
-* **Match your exact model & resolution.** Flashing the wrong package can brick your device.
-* Keep a **stable 12 V** during updates.
-* `file.myatoto.com` links are often **time-limited**; use **Manual URL** when ATOTO support sends one.
-* This tool **does not modify** firmware; it only downloads official packages.
+> Always follow ATOTO’s official instructions for your exact model.
 
 ---
 
+## ⚠️ Safety
+
+* **Match your exact model & resolution.** Flashing the wrong one can brick the unit.
+* Keep **stable 12 V** during updates.
+* `file.myatoto.com` links are often **time-limited** → use **Manual URL** when ATOTO support sends one.
+* This tool **does not modify** firmware — it only downloads official packages.
+
+---
+
+## 🗂️ Project layout (beta)
+
+```
+atoto_fw/
+  cli.py                 # tiny entry wrapper
+  ui.py                  # Rich TUI (profiles, menus, tables, progress)
+  core/
+    __init__.py          # facade re-exports (UI depends on these only)
+    assemble.py          # orchestrates discovery & merging
+    config.py            # config paths + load/save helpers
+    grouping.py          # tag_rows (Res/Scope/Variants/Fit), group_by_url
+    http.py              # resilient HTTP session + retries
+    utils.py             # helpers: sizes, hashing, url_leaf_name…
+    discovery/
+      api.py             # official API client
+      json_probe.py      # JSON endpoints probing
+      mirrors.py         # curated mirror links
+      normalize.py       # model normalization & mapping (MS/PE/PM, S01/S10…)
+  addons/                # future: extractors, tools (e.g., OTA → .img)
+```
+
+> **Why this structure?** It keeps the **UI thin** and the **core reusable**, so we can add features like **firmware extraction** later without destabilizing the downloader.
+
+---
+
+## 🧪 Dev tips
+
+* Toggle logs with `-v` or from the **Settings** menu.
+* If packaging for yourself:
+
+  * `pip install -e .` (editable)
+  * Console entry becomes `atoto-fw`.
+* Nice `.gitignore` adds:
+
+  ```
+  ATOTO_Firmware/
+  **/__pycache__/
+  *.part
+  dist/
+  build/
+  .pytest_cache/
+  ```
+
+---
+
+## 🛣️ Roadmap
+
+* Add-on: **OTA extractor** (e.g., `.new.dat.br` ➝ `.img`), with a simple menu.
+* Mirror list management (enable/disable, add custom).
+* Export results to JSON/CSV for support tickets.
+* Smarter “same-family” hints when MS/PE/PM share firmware.
+
+---
 
 ## 🤝 Contributing
 
-PRs welcome!
+PRs and issues welcome!
 
-* Add models to `RETAIL_TO_CANONICAL` to improve normalization.
-* Share additional public mirrors that are known-good.
-* Bug reports with your model + MCU + resolution help everyone.
+* Add more retail→canonical mappings in `normalize.py`.
+* Share known-good public mirrors.
+* Bug reports that include **model, MCU, resolution**, and whether the package is **Universal/Res-specific** help a ton.
 
 ---
 
 ## 📜 License
 
-**MIT** — free to use, modify, and share.
+**MIT** — do what you like, be kind, share improvements.
 
 ---
 
 **Repo:** [https://github.com/Eliminater74/atoto\_firmware\_downloader](https://github.com/Eliminater74/atoto_firmware_downloader)
-By: **Eliminater74**
-
-```
-::contentReference[oaicite:0]{index=0}
-```
+**This file:** for the **beta** branch (the **main** branch README is simpler for stable users).
