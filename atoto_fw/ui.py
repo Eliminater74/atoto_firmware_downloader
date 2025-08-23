@@ -7,6 +7,7 @@ UI layer for ATOTO Firmware Downloader
 - Rich menu + results table
 - Live status while probing API/JSON/mirrors (no more “stuck at starting”)
 - Resume download with progress + optional checksum verify
+- Advanced / Add-ons menu (e.g., OTA extractor)
 """
 
 from __future__ import annotations
@@ -37,6 +38,12 @@ from .core import (
     config_path,
 )
 from .core.utils import url_leaf_name  # leaf filename helper
+
+# Add-ons registry (optional, used by Advanced / Add-ons menu)
+try:
+    from .addons import available as addons_available
+except Exception:
+    addons_available = lambda: []  # graceful fallback if addons package is absent
 
 console = Console()
 
@@ -355,6 +362,31 @@ def run_search_download_flow(profile: Dict[str, Any], out_base: Path, verbose: b
         section("Download Failed")
         console.print(f"[red]Download failed:[/] {e}")
 
+# ────────────────────────── Advanced / Add-ons menu ──────────────────────────
+def addons_menu() -> None:
+    items = addons_available()
+    console.clear()
+    if not items:
+        console.print("[yellow]No add-ons registered.[/]")
+        Confirm.ask("Back", default=True)
+        return
+    console.print("[bold magenta]Advanced / Add-ons[/]\n")
+    for i, (name, _) in enumerate(items, 1):
+        console.print(f"[{i}] {name}")
+    console.print("[0] Back")
+    choice = Prompt.ask("Select", default="0").strip()
+    if not choice.isdigit() or choice == "0":
+        return
+    idx = int(choice)
+    if 1 <= idx <= len(items):
+        _, func = items[idx-1]
+        # run the add-on action (callable expects Console)
+        try:
+            func(console)
+        except TypeError:
+            # if your callable signature differs, you can adapt here
+            func(console=console)
+
 # ────────────────────────── Manual URL ──────────────────────────
 def manual_url_flow(download_dir: Path) -> None:
     section("Manual URL", "Paste a direct firmware URL from ATOTO")
@@ -391,6 +423,7 @@ def main_menu(out_dir: Path) -> None:
             "[3] Ad-hoc Search (don’t save)\n"
             "[4] Manual URL Download\n"
             "[5] Settings / Info\n"
+            "[6] Advanced / Add-ons\n"
             "[0] Exit"
         )
         ans = Prompt.ask("Select", default="1").strip()
@@ -428,6 +461,9 @@ def main_menu(out_dir: Path) -> None:
                 cfg["verbose"] = not cfg.get("verbose", False)
                 save_cfg(cfg)
             Confirm.ask("Back", default=True)
+
+        elif ans == "6":
+            addons_menu()
 
 # ────────────────────────── CLI entry (optional direct run) ──────────────────────────
 def parse_args():
