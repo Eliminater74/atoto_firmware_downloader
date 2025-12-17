@@ -27,6 +27,7 @@ __all__ = ["register", "available"]
 # Import modules that self-register via register(...).
 # Order matters only for how they appear in the menu.
 _MODULE_CANDIDATES = (
+    "extract_zip",        # new unzipper
     "firmware_workflow",  # new step-by-step firmware tools
     "ota_extract",        # your modular OTA extractor
     "extract_ota",        # legacy/alt name (if present)

@@ -24,10 +24,6 @@ from rich.status import Status
 from rich.progress import (
     BarColumn, Progress, TextColumn, TimeRemainingColumn, TransferSpeedColumn
 )
-try:
-    import msvcrt
-except ImportError:
-    msvcrt = None
 
 # Core primitives we render/use from the UI
 from .core import (
@@ -42,6 +38,7 @@ from .core import (
     config_path,
 )
 from .core.utils import url_leaf_name  # leaf filename helper
+from .tui import Menu, header_art, clear_screen, safe_filename, msvcrt
 
 # Add-ons registry (optional, used by Advanced / Add-ons menu)
 try:
@@ -51,87 +48,12 @@ except Exception:
 
 console = Console()
 
-# ────────────────────────── UI helpers ──────────────────────────
-def clear_screen() -> None:
-    console.clear()
-
-def header_art() -> str:
-    return r"""
-   ___   ______ ____  ______ ____ 
-  /   | /_  __// __ \_  __// __ \
- / /| |  / /  / / / / / /  / / / /
-/ ___ | / /  / /_/ / / /  / /_/ / 
-/_/  |_|/_/   \____/ /_/   \____/  
-"""
-
 def section(title: str, subtitle: str = "") -> None:
-    clear_screen()
+    clear_screen(console)
     msg = f"[bold magenta]{header_art()}[/]\n[bold]{title}[/]"
     if subtitle:
         msg += f"\n[dim]{subtitle}[/]"
     console.print(Panel.fit(msg, border_style="magenta"))
-
-def safe_filename(name: str) -> str:
-    return re.sub(r'[\\/*?:"<>|]+', "_", (name or "")).strip() or "file"
-
-# ────────────────────────── Interactive Menu Helper ──────────────────────────
-class Menu:
-    """Simple Interactive Menu for Windows (falls back to prompt on others)"""
-    def __init__(self, console_: Console, items: List[Tuple[str, Any]], title: str = "", subtitle: str = ""):
-        self.console = console_
-        self.items = items  # list of (label, return_value)
-        self.title = title
-        self.subtitle = subtitle
-        self.idx = 0
-
-    def show(self) -> Any:
-        # Fallback if not Windows or msvcrt missing
-        if not msvcrt:
-            self.console.print(f"[bold]{self.title}[/]")
-            for i, (label, _) in enumerate(self.items, 1):
-                self.console.print(f"[{i}] {label}")
-            ans = Prompt.ask("Select", default="1")
-            if ans.isdigit() and 1 <= int(ans) <= len(self.items):
-                return self.items[int(ans)-1][1]
-            return None
-
-        while True:
-            # Render
-            clear_screen()
-            msg = f"[bold magenta]{header_art()}[/]\n[bold]{self.title}[/]"
-            if self.subtitle:
-                msg += f"\n[dim]{self.subtitle}[/]"
-            self.console.print(Panel.fit(msg, border_style="magenta"))
-
-            # Render items
-            # simple list
-            lines = []
-            for i, (label, _) in enumerate(self.items):
-                cursor = "➤ " if i == self.idx else "  "
-                style = "reverse bold cyan" if i == self.idx else ""
-                if style:
-                    lines.append(f"[{style}]{cursor}{label}[/]")
-                else:
-                    lines.append(f"{cursor}{label}")
-            
-            self.console.print("\n".join(lines))
-            self.console.print("\n[dim]Use ↑/↓ and Enter to select. Esc/0 to Cancel.[/]")
-
-            # Input
-            key = msvcrt.getch()
-            if key in (b'\000', b'\xe0'): # Arrows
-                key = msvcrt.getch()
-                if key == b'H': # Up
-                    self.idx = max(0, self.idx - 1)
-                elif key == b'P': # Down
-                    self.idx = min(len(self.items) - 1, self.idx + 1)
-            elif key == b'\r': # Enter
-                return self.items[self.idx][1]
-            elif key in (b'\x1b', b'0'): # Esc or 0
-                return None
-            elif key == b'q': # q for quit (mapped to None)
-                return None
-
 
 # ────────────────────────── Profile UI ──────────────────────────
 def prompt_profile(existing: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -530,7 +452,7 @@ def main_menu(out_dir: Path) -> None:
         ans = menu.show()
 
         if ans == "EXIT" or ans is None:
-            clear_screen()
+            clear_screen(console)
             return
 
         elif ans == "QUICK":
