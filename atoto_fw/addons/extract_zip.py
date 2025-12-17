@@ -159,8 +159,7 @@ try:
                  # Try to import and run the other addon
                  try:
                      from .extract_ota import _ui_ota_extract
-                     console.print(f"[dim]Tip: Enter '{out_dir}' as the root folder in the next step.[/]")
-                     _ui_ota_extract(console)
+                     _ui_ota_extract(console, root=out_dir)
                  except ImportError:
                      console.print("[red]OTA Extractor addon not found.[/]")
         

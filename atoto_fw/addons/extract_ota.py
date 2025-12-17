@@ -187,7 +187,7 @@ def find_all(root: Path) -> Tuple[List[Path], List[Path]]:
     return br_files, lists
 
 def list_basename_without_transfer_dot_list(path: Path) -> str:
-    """Return 'system' from '...\system.transfer.list' (not 'system.transfer')."""
+    r"""Return 'system' from '...\system.transfer.list' (not 'system.transfer')."""
     name = path.name
     if name.lower().endswith(".transfer.list"):
         return name[:-len(".transfer.list")]
@@ -364,7 +364,8 @@ from rich.prompt import Prompt, Confirm
 
 def _ui_ota_extract(console, **kwargs):
     """Interactive wrapper that calls run_ota_extract()."""
-    root = Prompt.ask("Folder to scan for OTA files", default=".")
+    default_root = str(kwargs.get("root", "."))
+    root = Prompt.ask("Folder to scan for OTA files", default=default_root)
     overwrite = Confirm.ask("Overwrite existing .new.dat/.img?", default=False)
     raw = Confirm.ask("Also try simg2img to create *_raw.img (if available)?", default=False)
 
