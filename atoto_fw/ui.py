@@ -24,6 +24,10 @@ from rich.status import Status
 from rich.progress import (
     BarColumn, Progress, TextColumn, TimeRemainingColumn, TransferSpeedColumn
 )
+try:
+    import msvcrt
+except ImportError:
+    msvcrt = None
 
 # Core primitives we render/use from the UI
 from .core import (
@@ -70,6 +74,65 @@ def section(title: str, subtitle: str = "") -> None:
 def safe_filename(name: str) -> str:
     return re.sub(r'[\\/*?:"<>|]+', "_", (name or "")).strip() or "file"
 
+# ────────────────────────── Interactive Menu Helper ──────────────────────────
+class Menu:
+    """Simple Interactive Menu for Windows (falls back to prompt on others)"""
+    def __init__(self, console_: Console, items: List[Tuple[str, Any]], title: str = "", subtitle: str = ""):
+        self.console = console_
+        self.items = items  # list of (label, return_value)
+        self.title = title
+        self.subtitle = subtitle
+        self.idx = 0
+
+    def show(self) -> Any:
+        # Fallback if not Windows or msvcrt missing
+        if not msvcrt:
+            self.console.print(f"[bold]{self.title}[/]")
+            for i, (label, _) in enumerate(self.items, 1):
+                self.console.print(f"[{i}] {label}")
+            ans = Prompt.ask("Select", default="1")
+            if ans.isdigit() and 1 <= int(ans) <= len(self.items):
+                return self.items[int(ans)-1][1]
+            return None
+
+        while True:
+            # Render
+            clear_screen()
+            msg = f"[bold magenta]{header_art()}[/]\n[bold]{self.title}[/]"
+            if self.subtitle:
+                msg += f"\n[dim]{self.subtitle}[/]"
+            self.console.print(Panel.fit(msg, border_style="magenta"))
+
+            # Render items
+            # simple list
+            lines = []
+            for i, (label, _) in enumerate(self.items):
+                cursor = "➤ " if i == self.idx else "  "
+                style = "reverse bold cyan" if i == self.idx else ""
+                if style:
+                    lines.append(f"[{style}]{cursor}{label}[/]")
+                else:
+                    lines.append(f"{cursor}{label}")
+            
+            self.console.print("\n".join(lines))
+            self.console.print("\n[dim]Use ↑/↓ and Enter to select. Esc/0 to Cancel.[/]")
+
+            # Input
+            key = msvcrt.getch()
+            if key in (b'\000', b'\xe0'): # Arrows
+                key = msvcrt.getch()
+                if key == b'H': # Up
+                    self.idx = max(0, self.idx - 1)
+                elif key == b'P': # Down
+                    self.idx = min(len(self.items) - 1, self.idx + 1)
+            elif key == b'\r': # Enter
+                return self.items[self.idx][1]
+            elif key in (b'\x1b', b'0'): # Esc or 0
+                return None
+            elif key == b'q': # q for quit (mapped to None)
+                return None
+
+
 # ────────────────────────── Profile UI ──────────────────────────
 def prompt_profile(existing: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     console.print(Panel.fit("Create / Edit Profile", border_style="cyan"))
@@ -95,53 +158,65 @@ def prompt_profile(existing: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
 
 def profile_menu(cfg: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     while True:
-        section("Profiles", f"Config file: {config_path()}")
-        tbl = Table(show_lines=False, header_style="bold magenta", box=box.SIMPLE_HEAVY)
-        tbl.add_column("#"); tbl.add_column("Name"); tbl.add_column("Model")
-        tbl.add_column("MCU"); tbl.add_column("Res"); tbl.add_column("Variants")
-        tbl.add_column("Universal?")
+        # Build menu items
         names = sorted(cfg["profiles"].keys())
-        for i, name in enumerate(names, 1):
+        items = []
+        for name in names:
             p = cfg["profiles"][name]
-            tbl.add_row(
-                str(i), name, p.get("model", ""), p.get("mcu", ""), p.get("res", ""),
-                p.get("variants", "ANY"), "Yes" if p.get("prefer_universal", True) else "No"
-            )
-        console.print(tbl)
-        console.print("[dim]A=Add  E=Edit  D=Delete  S=Select default  Q=Back[/]")
-        ans = Prompt.ask("Action", default="S").strip().upper()
+            desc = f"{name} [dim]({p.get('model','')}, {p.get('res','')})[/]"
+            items.append((desc, name))
+        
+        # Actions
+        items.append(("---", None))
+        items.append(("[bold green]Create New Profile[/]", "CREATE"))
+        items.append(("[bold red]Delete a Profile[/]", "DELETE"))
+        items.append(("[bold yellow]Edit a Profile[/]", "EDIT"))
+        items.append(("[dim]Back[/]", "BACK"))
 
-        if ans == "Q":
+        # Pre-select based on last usage if possible
+        menu = Menu(console, items, 
+                    title="Profiles", 
+                    subtitle=f"Config: {config_path()}\nSelect a profile to use it, or manage them.")
+        
+        # If we just want to select, we run show(). 
+        # But here we have mixed actions (Select vs Manage).
+        # We'll handle the generic "name" return as "Select this profile".
+        
+        choice = menu.show()
+        if not choice or choice == "BACK":
             return None
-        if ans == "A":
+        
+        if choice == "CREATE":
             p = prompt_profile({})
             cfg["profiles"][p["name"]] = p
             save_cfg(cfg)
-        elif ans == "E" and names:
-            idx = Prompt.ask("Edit #", default="1").strip()
-            if idx.isdigit() and 1 <= int(idx) <= len(names):
-                key = names[int(idx) - 1]
-                p = prompt_profile(cfg["profiles"][key])
-                if p["name"] != key:
-                    del cfg["profiles"][key]
+        elif choice == "DELETE":
+            # Sub-menu for deletion
+            del_items = [(n, n) for n in names]
+            del_items.append(("Cancel", None))
+            to_del = Menu(console, del_items, title="Delete Profile").show()
+            if to_del and Confirm.ask(f"Delete profile '{to_del}'?", default=False):
+                del cfg["profiles"][to_del]
+                if cfg.get("last_profile") == to_del:
+                    cfg["last_profile"] = ""
+                save_cfg(cfg)
+        elif choice == "EDIT":
+             # Sub-menu for edit
+            edit_items = [(n, n) for n in names]
+            edit_items.append(("Cancel", None))
+            to_edit = Menu(console, edit_items, title="Edit Profile").show()
+            if to_edit:
+                p = prompt_profile(cfg["profiles"][to_edit])
+                if p["name"] != to_edit:
+                    del cfg["profiles"][to_edit]
                 cfg["profiles"][p["name"]] = p
                 save_cfg(cfg)
-        elif ans == "D" and names:
-            idx = Prompt.ask("Delete #", default="1").strip()
-            if idx.isdigit() and 1 <= int(idx) <= len(names):
-                key = names[int(idx) - 1]
-                if Confirm.ask(f"Delete profile '{key}'?", default=False):
-                    del cfg["profiles"][key]
-                    if cfg.get("last_profile") == key:
-                        cfg["last_profile"] = ""
-                    save_cfg(cfg)
-        elif ans == "S" and names:
-            idx = Prompt.ask("Select # as default", default="1").strip()
-            if idx.isdigit() and 1 <= int(idx) <= len(names):
-                key = names[int(idx) - 1]
-                cfg["last_profile"] = key
-                save_cfg(cfg)
-                return cfg["profiles"][key]
+        else:
+             # It's a profile name
+            key = choice
+            cfg["last_profile"] = key
+            save_cfg(cfg)
+            return cfg["profiles"][key]
 
 # ────────────────────────── Results table & selection ──────────────────────────
 def render_and_pick(
@@ -167,50 +242,70 @@ def render_and_pick(
 
     filt = [r for r in grouped if row_ok(r)] or grouped
 
-    section(
-        "Firmware Results",
-        "Universal = not tied to a specific resolution. "
-        "Res-specific = package names that explicitly mention 1024×600 or 1280×720."
-    )
-    console.print(Panel.fit(
-        "[bold]Tip[/]: Prefer Universal packages for the same device family; "
-        "use Res-specific only when a package explicitly targets your screen.\n"
-        f"[dim]Profile Fit: {my_res or '?'} · Variant prefs: "
-        f"{', '.join(want_variants) if want_variants else 'ANY'} · "
-        f"Scope: {'Universal preferred' if prefer_universal else 'All'}[/]",
-        border_style="cyan"
-    ))
+    # Interactive Table Selection
+    idx = 0
+    while True:
+        section(
+            "Firmware Results",
+            "Universal = not tied to a specific resolution. "
+            "Res-specific = package names that explicitly mention 1024×600 or 1280×720."
+        )
+        console.print(Panel.fit(
+            "[bold]Tip[/]: Prefer Universal packages for the same device family; "
+            "use Res-specific only when a package explicitly targets your screen.\n"
+            f"[dim]Profile Fit: {my_res or '?'} · Variant prefs: "
+            f"{', '.join(want_variants) if want_variants else 'ANY'} · "
+            f"Scope: {'Universal preferred' if prefer_universal else 'All'}[/]",
+            border_style="cyan"
+        ))
 
-    table = Table(
-        title="Available Packages",
-        show_lines=False,
-        header_style="bold magenta",
-        box=box.SIMPLE_HEAVY
-    )
-    cols = [
-        ("id", "#"), ("source", "Src"), ("title", "Title"), ("version", "Ver"),
-        ("date", "Date"), ("size", "Size"), ("res", "Res"), ("scope", "Scope"),
-        ("variants", "Variants"), ("fit", "Fit"), ("url", "URL")
-    ]
-    for _, hdr in cols:
-        table.add_column(hdr, overflow="fold")
+        table = Table(
+            title="Available Packages (Use ↑/↓ and Enter)",
+            show_lines=False,
+            header_style="bold magenta",
+            box=box.SIMPLE_HEAVY
+        )
+        cols = [
+            ("id", "#"), ("source", "Src"), ("title", "Title"), ("version", "Ver"),
+            ("date", "Date"), ("size", "Size"), ("res", "Res"), ("scope", "Scope"),
+            ("variants", "Variants"), ("fit", "Fit"), ("url", "URL")
+        ]
+        for _, hdr in cols:
+            table.add_column(hdr, overflow="fold")
 
-    for idx, r in enumerate(filt, 1):
-        r_view = r.copy()
-        r_view["id"] = str(idx)
-        r_view["size"] = human_size(r.get("size"))
-        table.add_row(*[str(r_view.get(k, "")) for k, _ in cols])
+        # Rendering for specific index
+        for i, r in enumerate(filt):
+            r_view = r.copy()
+            r_view["id"] = str(i+1)
+            r_view["size"] = human_size(r.get("size"))
+            
+            style = "reverse bold cyan" if i == idx and msvcrt else ""
+            
+            # Add row with style
+            table.add_row(*[str(r_view.get(k, "")) for k, _ in cols], style=style)
 
-    console.print(table)
+        console.print(table)
+        console.print(f"[dim]Selected: #{idx+1} (Total {len(filt)}) · Esc/0 to Cancel[/]")
 
-    raw = Prompt.ask("Select # (0 to cancel)", default="1" if filt else "0").strip()
-    if raw == "0" or not raw.isdigit():
-        return None
-    i = int(raw)
-    if not (1 <= i <= len(filt)):
-        return None
+        if not msvcrt:
+             # Fallback
+            raw = Prompt.ask("Select # (0 to cancel)", default="1").strip()
+            if raw == "0" or not raw.isdigit(): return None
+            v = int(raw)
+            if 1 <= v <= len(filt): return filt[v-1]
+            return None
 
-    choice = filt[i - 1]
+        key = msvcrt.getch()
+        if key in (b'\000', b'\xe0'):
+            key = msvcrt.getch()
+            if key == b'H': idx = max(0, idx - 1)
+            elif key == b'P': idx = min(len(filt) - 1, idx + 1)
+        elif key == b'\r':
+            break
+        elif key in (b'\x1b', b'0'): 
+            return None
+
+    choice = filt[idx]
     if choice.get("fit") == "⚠":
         console.print(
             f"[yellow]Heads-up:[/] package looks like [bold]{choice.get('res','?')}[/], "
@@ -413,26 +508,28 @@ def main_menu(out_dir: Path) -> None:
     cfg = load_cfg()
     while True:
         default_name = cfg.get("last_profile") or "(none)"
-        section(
-            "ATOTO Firmware Downloader",
-            f"Default profile: {default_name}\nConfig: {config_path()}"
-        )
-        console.print(
-            "[1] Quick Search (use default profile)\n"
-            "[2] Profiles (create/edit/select)\n"
-            "[3] Ad-hoc Search (don’t save)\n"
-            "[4] Manual URL Download\n"
-            "[5] Settings / Info\n"
-            "[6] Advanced / Add-ons\n"
-            "[0] Exit"
-        )
-        ans = Prompt.ask("Select", default="1").strip()
+        
+        items = [
+            ("Quick Search [dim](use default profile)[/]", "QUICK"),
+            ("Profiles [dim](create/edit/select)[/]", "PROFILES"),
+            ("Ad-hoc Search [dim](don't save)[/]", "ADHOC"),
+            ("Manual URL Download", "MANUAL"),
+            ("Settings / Info", "SETTINGS"),
+            ("Advanced / Add-ons", "ADDONS"),
+            ("Exit", "EXIT")
+        ]
+        
+        menu = Menu(console, items, 
+                    title="ATOTO Firmware Downloader",
+                    subtitle=f"Default profile: {default_name}\nConfig: {config_path()}")
+        
+        ans = menu.show()
 
-        if ans == "0":
+        if ans == "EXIT" or ans is None:
             clear_screen()
             return
 
-        elif ans == "1":
+        elif ans == "QUICK":
             name = cfg.get("last_profile", "")
             if name and name in cfg["profiles"]:
                 run_search_download_flow(cfg["profiles"][name], out_dir, cfg.get("verbose", False))
@@ -442,27 +539,26 @@ def main_menu(out_dir: Path) -> None:
                 if p:
                     run_search_download_flow(p, out_dir, cfg.get("verbose", False))
 
-        elif ans == "2":
+        elif ans == "PROFILES":
             p = profile_menu(cfg)
             if p and Confirm.ask("Run Quick Search with this profile now?", default=True):
                 run_search_download_flow(p, out_dir, cfg.get("verbose", False))
 
-        elif ans == "3":
+        elif ans == "ADHOC":
             p = prompt_profile({})
             run_search_download_flow(p, out_dir, cfg.get("verbose", False))
 
-        elif ans == "4":
+        elif ans == "MANUAL":
             manual_url_flow(out_dir / "manual")
 
-        elif ans == "5":
+        elif ans == "SETTINGS":
             section("Settings / Info", f"Config: {config_path()}\nOutput: {out_dir}")
             console.print(f"Verbose logs: {'ON' if cfg.get('verbose', False) else 'OFF'}")
             if Confirm.ask("Toggle verbose?", default=False):
                 cfg["verbose"] = not cfg.get("verbose", False)
                 save_cfg(cfg)
-            Confirm.ask("Back", default=True)
-
-        elif ans == "6":
+            
+        elif ans == "ADDONS":
             addons_menu()
 
 # ────────────────────────── CLI entry (optional direct run) ──────────────────────────

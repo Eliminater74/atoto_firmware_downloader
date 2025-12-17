@@ -19,6 +19,7 @@ Internal helpers:
 
 from __future__ import annotations
 import hashlib, json, math, os, re, urllib.parse
+import concurrent.futures
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -424,30 +425,81 @@ def try_lookup(model: str, mcu: str, progress=None) -> Tuple[List[Dict[str, Any]
     cands = normalize_candidates(model)
     hits: List[str] = []
     merged: List[Dict[str, Any]] = []
-
-    # 1) API across candidates
-    total = len(cands) or 1
-    for j, cand in enumerate(cands, start=1):
+    
+    # Thread-safe progress wrapper
+    import threading
+    prog_lock = threading.Lock()
+    def safe_log(msg: str):
         if progress:
-            progress(f"API {j}/{total} @ {cand}")
-        pkgs = fetch_api_packages(cand, mcu)
-        if pkgs:
-            for p in pkgs:
-                p.setdefault("source", "API")
-                q = p.copy()
-                q["title"] = f"[{cand}] {q['title']}"
-                merged.append(q)
-            hits.append(cand)
+            with prog_lock:
+                progress(msg)
 
-    # 2) JSON probe – first successful endpoint among ALL candidates
-    seen_eps: set = set()
-    for j, cand in enumerate(cands, start=1):
-        pkgs_json, endpoint = discover_packages_via_json(cand, progress=progress, seen_endpoints=seen_eps)
-        if pkgs_json:
-            for p in pkgs_json:
-                p["title"] = f"[{cand}] {p['title']}"
-            merged.extend(pkgs_json)
-            break
+    # We'll run API and JSON probes in parallel
+    # Higher max_workers because these are network I/O bound
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        # 1) Submit API tasks
+        #    Map: future -> candidate
+        api_map = {
+            executor.submit(fetch_api_packages, c, mcu): c 
+            for c in cands
+        }
+        
+        # 2) Submit JSON tasks
+        #    Map: future -> candidate
+        #    Note: we don't share seen_endpoints across threads to avoid locks;
+        #    duplicate probes are rare enough to be acceptable for speed.
+        json_map = {
+            executor.submit(discover_packages_via_json, c, progress=safe_log, seen_endpoints=set()): c
+            for c in cands
+        }
+
+        # Be responsive: log as API tasks finish
+        for f in concurrent.futures.as_completed(api_map):
+            cand = api_map[f]
+            try:
+                pkgs = f.result()
+                if pkgs:
+                    for p in pkgs:
+                        p.setdefault("source", "API")
+                        q = p.copy()
+                        q["title"] = f"[{cand}] {q['title']}"
+                        merged.append(q)
+                    hits.append(cand)
+            except Exception:
+                pass
+        
+        # For JSON, we respect the priority order of 'cands'.
+        # We wait for all (or at least the higher priority ones) to decide.
+        # Since we want to support "break on first hit" logic to avoid clutter,
+        # we check results in candidate order.
+        
+        # We need all JSON tasks to complete to be sure about priority? 
+        # Actually, if the first candidate returns a result, we don't care about the rest?
+        # But we fired them all off. We'll just collect from the first successful one.
+        concurrent.futures.wait(json_map.keys())
+        
+        # Iterate in priority order
+        for c in cands:
+            # Find the future for this candidate
+            # (Looping over map items is inefficient but n is small)
+            found_future = None
+            for fut, cand_key in json_map.items():
+                if cand_key == c:
+                    found_future = fut
+                    break
+            
+            if found_future:
+                try:
+                    pkgs_json, endpoint = found_future.result()
+                    if pkgs_json:
+                        safe_log(f"Found JSON index for {c}")
+                        for p in pkgs_json:
+                            p["title"] = f"[{c}] {p['title']}"
+                        merged.extend(pkgs_json)
+                        # We stop at the first candidate that has a working JSON index
+                        break 
+                except Exception:
+                    pass
 
     # 3) Known mirrors for the family leader (first cand)
     if progress:
