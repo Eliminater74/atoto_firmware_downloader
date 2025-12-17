@@ -81,6 +81,54 @@ def compress_file(console: Console, src: Path, dst: Path):
         console.print(f"[red]Compression failed:[/] {e}")
         return False
 
+def repack_image(console: Console, target_img: Path) -> Optional[Path]:
+    """Repack a single image. Returns path to temp .dat file if successful, else None."""
+    # Check sparse
+    if is_sparse_image(target_img):
+        console.print(f"[red]Error:[/] [bold]{target_img.name}[/] is a Sparse Image. Repacking requires RAW.")
+        return None
+            
+    # Calculate info
+    size = target_img.stat().st_size
+    blocks = math.ceil(size / BLOCK_SIZE)
+    
+    base_name = target_img.stem
+    root = target_img.parent
+    out_transfer = root / f"{base_name}.transfer.list"
+    out_patch = root / f"{base_name}.patch.dat"
+    out_new_dat = root / f"{base_name}.new.dat"
+    out_br = root / f"{base_name}.new.dat.br"
+    
+    console.print(f"\nProcessing [bold cyan]{base_name}[/] ...")
+    
+    # 1. Generate transfer.list
+    console.print(f"  - Generating [bold]{out_transfer.name}[/] (blocks={blocks})...")
+    write_transfer_list(out_transfer, blocks)
+    
+    # 2. Generate patch.dat
+    with open(out_patch, 'wb') as f:
+        f.write(b"NEWPATCH")
+
+    # 3. Create .new.dat (Padded)
+    console.print(f"  - Creating [bold]{out_new_dat.name}[/] (padded)...")
+    pad_len = (blocks * BLOCK_SIZE) - size
+    
+    with open(target_img, 'rb') as fin, open(out_new_dat, 'wb') as fout:
+        while True:
+            chunk = fin.read(1024*1024)
+            if not chunk: break
+            fout.write(chunk)
+        if pad_len > 0:
+            fout.write(b'\x00' * pad_len)
+            
+    # 4. Compress
+    if compress_file(console, out_new_dat, out_br):
+        console.print(f"  - [green]Success![/] Created {out_br.name}")
+        return out_new_dat
+    else:
+        # Failed, but maybe kept .dat
+        return None
+
 def _addon_repack(console: Console, **kwargs):
     section(console, "Repack Firmware Image", "Convert .img -> .new.dat.br + .transfer.list")
     
@@ -89,8 +137,7 @@ def _addon_repack(console: Console, **kwargs):
         if not Confirm.ask("Continue anyway?", default=False):
             return
 
-    # 1. Select Folder or File
-    # Using FolderPicker to pick dir, then Menu to pick .img?
+    # 1. Select Folder
     console.print("[dim]Select the folder containing your .img files.[/]")
     fp = FolderPicker(console, start_path=".")
     root_str = fp.show()
@@ -109,83 +156,42 @@ def _addon_repack(console: Console, **kwargs):
     items = []
     for p in imgs:
         sz = p.stat().st_size / (1024*1024)
-        items.append((f"{p.name} [dim]({sz:.1f} MB)[/]", p))
-    items.append(("Cancel", None))
+        name_lower = p.name.lower()
+        note = ""
+        if "boot.img" in name_lower or "dtbo.img" in name_lower:
+            note = " [yellow](Warning: usually stays as .img)[/]"
+        
+        items.append((f"{p.name} [dim]({sz:.1f} MB)[/]{note}", p))
     
-    menu = Menu(console, items, title="Select Image to Repack")
-    target_img: Path = menu.show()
-    if not target_img:
+    menu = Menu(console, items, title="Select Images to Repack (Space to toggle)")
+    selected_imgs: List[Path] = menu.show_multiselect()
+    
+    if not selected_imgs:
         return
 
-    # Check sparse
-    if is_sparse_image(target_img):
-        console.print("[red]Error:[/] This appears to be an Android Sparse Image.[/]")
-        console.print("Repacking requires a [bold]RAW[/] image (unsparsed).")
-        console.print("If you extracted this with our tool, use the converted .img, not a sparse one.")
-        if not Confirm.ask("Try to proceed anyway (result might be invalid)?", default=False):
-            return
-            
-    # Calculate info
-    size = target_img.stat().st_size
-    blocks = math.ceil(size / BLOCK_SIZE)
-    # Used size is blocks * 4096. If file is smaller, we might need to pad .dat?
-    # Actually, Android updater writes blocks. If we say "new 2,0,100", it expects 100*4096 bytes in .new.dat.
-    # So we MUST pad the .new.dat to align to 4KB.
-    
-    base_name = target_img.stem # e.g. "product"
-    out_transfer = root / f"{base_name}.transfer.list"
-    out_patch = root / f"{base_name}.patch.dat"
-    out_new_dat = root / f"{base_name}.new.dat"
-    out_br = root / f"{base_name}.new.dat.br"
+    # Batch Process
+    temp_dats: List[Path] = []
     
     console.line()
-    if Confirm.ask(f"Ready to repack [bold]{base_name}[/]?\nOutput: {out_br.name}, {out_transfer.name}", default=True):
-        
-        # 1. Generate transfer.list
-        console.print(f"Generating [bold]{out_transfer.name}[/] (blocks={blocks})...")
-        write_transfer_list(out_transfer, blocks)
-        
-        # 2. Generate patch.dat (empty)
-        console.print(f"Creating empty [bold]{out_patch.name}[/]...")
-        out_patch.write_bytes(b"NEWPATCH") # Actually header is usually "NEWPATCH" for some versions, or just empty?
-        # Standard AOSP: .patch.dat usually has "NEWPATCH" magic if using imgdiff, but for full OTA 'new' command, it might be ignored.
-        # However, checking `ota_from_target_files`, `patch.dat` is created.
-        # For "new" commands only, patch.dat is unused effectively. 
-        # But commonly it contains `block_img_diff` header if strictly compliant.
-        # Let's write "NEWPATCH" as a safe bet for v3/v4 listeners or just empty.
-        # Actually, if we use "new", there are no patch commands. So empty might be fine.
-        # Safest: "NEWPATCH" encoded bytes.
-        with open(out_patch, 'wb') as f:
-            f.write(b"NEWPATCH")
-
-        # 3. Create .new.dat (Padded)
-        console.print(f"Creating [bold]{out_new_dat.name}[/] (padded)...")
-        pad_len = (blocks * BLOCK_SIZE) - size
-        
-        # Copy + Pad
-        with open(target_img, 'rb') as fin, open(out_new_dat, 'wb') as fout:
-            # We can stream copy
-            while True:
-                chunk = fin.read(1024*1024)
-                if not chunk: break
-                fout.write(chunk)
-            if pad_len > 0:
-                fout.write(b'\x00' * pad_len)
-                
-        # 4. Compress
-        console.print("Compressing...")
-        if compress_file(console, out_new_dat, out_br):
-            console.print("[green]Success![/] Created .br file.")
-            # Verify?
+    console.print(f"Selected {len(selected_imgs)} files.")
+    
+    for img in selected_imgs:
+        res = repack_image(console, img)
+        if res:
+            temp_dats.append(res)
             
-            # Offer to delete .new.dat (temp)
-            if Confirm.ask(f"Delete intermediate [bold]{out_new_dat.name}[/]?", default=True):
-                os.remove(out_new_dat)
-                console.print("Deleted intermediate .dat.")
-        else:
-            console.print("[red]Compression failed[/]. .new.dat kept.")
+    # Cleanup
+    if temp_dats:
+        console.line()
+        if Confirm.ask(f"Process complete. Delete {len(temp_dats)} intermediate .dat files?", default=True):
+            for p in temp_dats:
+                try:
+                    os.remove(p)
+                    console.print(f"  - Deleted {p.name}")
+                except Exception as e:
+                    console.print(f"  - Failed to delete {p.name}: {e}")
             
-        Confirm.ask("Done. Press Enter to return.", default=True)
+    Confirm.ask("Done. Press Enter to return.", default=True)
 
 # Register
 register("Repack Firmware Image (.img → .dat.br)", _addon_repack)

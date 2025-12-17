@@ -93,6 +93,68 @@ class Menu:
             elif key == b'q': # q for quit (mapped to None)
                 return None
 
+    def show_multiselect(self) -> List[Any]:
+        """Show checks, return list of selected values."""
+        # Fallback
+        if not msvcrt:
+            self.console.print(f"[bold]{self.title} (Multi-select)[/]")
+            self.console.print("[dim]Enter indices separated by comma (e.g. 1,3)[/]")
+            for i, (label, _) in enumerate(self.items, 1):
+                self.console.print(f"[{i}] {label}")
+            ans = Prompt.ask("Select", default="")
+            if not ans.strip(): return []
+            selected = []
+            for part in ans.split(','):
+                if part.strip().isdigit():
+                    idx = int(part.strip()) - 1
+                    if 0 <= idx < len(self.items):
+                        selected.append(self.items[idx][1])
+            return selected
+
+        # Interactive
+        selected_indices = set()
+        
+        while True:
+            # Render
+            self.console.clear()
+            msg = f"[bold magenta]{header_art()}[/]\n[bold]{self.title}[/]"
+            if self.subtitle:
+                msg += f"\n[dim]{self.subtitle}[/]"
+            self.console.print(Panel.fit(msg, border_style="magenta"))
+
+            lines = []
+            for i, (label, _) in enumerate(self.items):
+                cursor = "➤ " if i == self.idx else "  "
+                box = "[green][x][/]" if i in selected_indices else "[ ]"
+                style = "reverse bold cyan" if i == self.idx else ""
+                
+                # Strip existing color markup from label for cleanliness if needed, 
+                # but usually we want to keep it.
+                row = f"{cursor}{box} {label}"
+                if style:
+                    lines.append(f"[{style}]{row}[/]")
+                else:
+                    lines.append(row)
+            
+            self.console.print("\n".join(lines))
+            self.console.print("\n[dim]Space=Toggle, Enter=Confirm, Esc=Cancel.[/]")
+
+            # Input
+            key = msvcrt.getch()
+            if key in (b'\000', b'\xe0'): 
+                key = msvcrt.getch()
+                if key == b'H': self.idx = max(0, self.idx - 1)
+                elif key == b'P': self.idx = min(len(self.items) - 1, self.idx + 1)
+            elif key == b' ': # Toggle
+                if self.idx in selected_indices:
+                    selected_indices.remove(self.idx)
+                else:
+                    selected_indices.add(self.idx)
+            elif key == b'\r': # Enter
+                return [self.items[i][1] for i in sorted(selected_indices)]
+            elif key in (b'\x1b', b'0', b'q'):
+                return []
+
 class FolderPicker:
     """Interactive Folder Selection Menu"""
     def __init__(self, console_: Console, start_path: str = ".", title: str = "Select Folder"):
