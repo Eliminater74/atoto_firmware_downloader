@@ -459,22 +459,26 @@ def run_search_download_flow(profile: Dict[str, Any], out_base: Path, verbose: b
 
 # ────────────────────────── Advanced / Add-ons menu ──────────────────────────
 def addons_menu() -> None:
-    items = addons_available()
-    console.clear()
-    if not items:
+    items_avail = addons_available()
+    if not items_avail:
+        console.clear()
         console.print("[yellow]No add-ons registered.[/]")
         Confirm.ask("Back", default=True)
         return
-    console.print("[bold magenta]Advanced / Add-ons[/]\n")
-    for i, (name, _) in enumerate(items, 1):
-        console.print(f"[{i}] {name}")
-    console.print("[0] Back")
-    choice = Prompt.ask("Select", default="0").strip()
-    if not choice.isdigit() or choice == "0":
-        return
-    idx = int(choice)
-    if 1 <= idx <= len(items):
-        _, func = items[idx-1]
+
+    # Convert to Menu items
+    # items_avail is List[Tuple[name, func]]
+    menu_items = []
+    for name, func in items_avail:
+        menu_items.append((name, func))
+    
+    menu_items.append(("---", None))
+    menu_items.append(("Back", None))
+
+    menu = Menu(console, menu_items, title="Advanced / Add-ons")
+    func = menu.show()
+
+    if func:
         # run the add-on action (callable expects Console)
         try:
             func(console)
