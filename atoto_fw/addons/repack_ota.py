@@ -171,6 +171,7 @@ def _addon_repack(console: Console, **kwargs):
 
     # Batch Process
     temp_dats: List[Path] = []
+    processed_imgs: List[Path] = [] # Track successfully processed images
     
     console.line()
     console.print(f"Selected {len(selected_imgs)} files.")
@@ -179,12 +180,24 @@ def _addon_repack(console: Console, **kwargs):
         res = repack_image(console, img)
         if res:
             temp_dats.append(res)
+            processed_imgs.append(img)
             
-    # Cleanup
+    # Cleanup .dat (intermediate)
     if temp_dats:
         console.line()
         if Confirm.ask(f"Process complete. Delete {len(temp_dats)} intermediate .dat files?", default=True):
             for p in temp_dats:
+                try:
+                    os.remove(p)
+                    console.print(f"  - Deleted {p.name}")
+                except Exception as e:
+                    console.print(f"  - Failed to delete {p.name}: {e}")
+
+    # Cleanup .img (original)
+    if processed_imgs:
+        console.line()
+        if Confirm.ask(f"[bold red]Delete {len(processed_imgs)} original .img files?[/] (Cannot be undone)", default=False):
+            for p in processed_imgs:
                 try:
                     os.remove(p)
                     console.print(f"  - Deleted {p.name}")
