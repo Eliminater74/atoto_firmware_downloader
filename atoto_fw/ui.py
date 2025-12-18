@@ -38,7 +38,7 @@ from .core import (
     config_path,
 )
 from .core.utils import url_leaf_name  # leaf filename helper
-from .tui import Menu, header_art, clear_screen, safe_filename, msvcrt
+from .tui import Menu, header_art, clear_screen, safe_filename, msvcrt, section
 
 # Add-ons registry (optional, used by Advanced / Add-ons menu)
 try:
@@ -47,13 +47,6 @@ except Exception:
     addons_available = lambda: []  # graceful fallback if addons package is absent
 
 console = Console()
-
-def section(title: str, subtitle: str = "") -> None:
-    clear_screen(console)
-    msg = f"[bold magenta]{header_art()}[/]\n[bold]{title}[/]"
-    if subtitle:
-        msg += f"\n[dim]{subtitle}[/]"
-    console.print(Panel.fit(msg, border_style="magenta"))
 
 # ────────────────────────── Profile UI ──────────────────────────
 def prompt_profile(existing: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -168,6 +161,7 @@ def render_and_pick(
     idx = 0
     while True:
         section(
+            console,
             "Firmware Results",
             "Universal = not tied to a specific resolution. "
             "Res-specific = package names that explicitly mention 1024×600 or 1280×720."
@@ -314,6 +308,7 @@ def run_search_download_flow(profile: Dict[str, Any], out_base: Path, verbose: b
 
     # searching screen + live spinner
     section(
+        console,
         "Searching…",
         f"Model {model} • MCU {mcu or 'n/a'} • Res {my_res}\n"
         "[dim]Probing API, JSON and mirrors. This may take several seconds.[/]"
@@ -347,6 +342,7 @@ def run_search_download_flow(profile: Dict[str, Any], out_base: Path, verbose: b
 
     if not rows:
         section(
+            console,
             "No Packages Found",
             "Could not find firmware via API/JSON/mirrors.\n"
             "Try a nearby model name or use Manual URL."
@@ -355,7 +351,7 @@ def run_search_download_flow(profile: Dict[str, Any], out_base: Path, verbose: b
 
     chosen = render_and_pick(rows, my_res, prefer_universal, variants_pref)
     if not chosen:
-        section("Canceled")
+        section(console, "Canceled")
         return
 
     model_for_path = (hits[0] if hits else model)
@@ -365,18 +361,19 @@ def run_search_download_flow(profile: Dict[str, Any], out_base: Path, verbose: b
     out_path = out_dir / filename
 
     section(
+        console,
         "Download Ready",
         f"Saving to: {out_path}\nReported size: {human_size(chosen.get('size'))}\n\nPress Ctrl+C to cancel"
     )
     try:
         download_with_progress(chosen["url"], out_path, expected_hash=chosen.get("hash", ""))
-        section("Download Complete")
+        section(console, "Download Complete")
         console.print(f"[green]Done![/] File saved:\n[bold]{out_path}[/]")
     except KeyboardInterrupt:
-        section("Interrupted")
+        section(console, "Interrupted")
         console.print("[yellow]Interrupted by user.[/]")
     except Exception as e:
-        section("Download Failed")
+        section(console, "Download Failed")
         console.print(f"[red]Download failed:[/] {e}")
 
 # ────────────────────────── Advanced / Add-ons menu ──────────────────────────
@@ -410,23 +407,23 @@ def addons_menu() -> None:
 
 # ────────────────────────── Manual URL ──────────────────────────
 def manual_url_flow(download_dir: Path) -> None:
-    section("Manual URL", "Paste a direct firmware URL from ATOTO")
+    section(console, "Manual URL", "Paste a direct firmware URL from ATOTO")
     url = Prompt.ask("Direct URL (or leave blank to abort)", default="").strip()
     if not url:
-        section("Canceled")
+        section(console, "Canceled")
         return
     download_dir.mkdir(parents=True, exist_ok=True)
     out = download_dir / safe_filename(url_leaf_name(url))
-    section("Download Ready", f"Saving to: {out}\n\nPress Ctrl+C to cancel")
+    section(console, "Download Ready", f"Saving to: {out}\n\nPress Ctrl+C to cancel")
     try:
         download_with_progress(url, out)
-        section("Download Complete")
+        section(console, "Download Complete")
         console.print(f"[green]Done![/] File saved:\n[bold]{out}[/]")
     except KeyboardInterrupt:
-        section("Interrupted")
+        section(console, "Interrupted")
         console.print("[yellow]Interrupted by user.[/]")
     except Exception as e:
-        section("Download Failed")
+        section(console, "Download Failed")
         console.print(f"[red]Download failed:[/] {e}")
 
 # ────────────────────────── Main menu ──────────────────────────
@@ -478,7 +475,7 @@ def main_menu(out_dir: Path) -> None:
             manual_url_flow(out_dir / "manual")
 
         elif ans == "SETTINGS":
-            section("Settings / Info", f"Config: {config_path()}\nOutput: {out_dir}")
+            section(console, "Settings / Info", f"Config: {config_path()}\nOutput: {out_dir}")
             console.print(f"Verbose logs: {'ON' if cfg.get('verbose', False) else 'OFF'}")
             if Confirm.ask("Toggle verbose?", default=False):
                 cfg["verbose"] = not cfg.get("verbose", False)

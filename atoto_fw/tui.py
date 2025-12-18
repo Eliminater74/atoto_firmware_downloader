@@ -15,6 +15,26 @@ try:
 except ImportError:
     msvcrt = None
 
+import platform
+import sys
+
+def get_system_label() -> str:
+    """Return a formatted system status string."""
+    os_name = platform.system()
+    release = platform.release()
+    
+    # Check menu mode
+    menu_mode = "Interactive" if msvcrt else "Basic"
+    
+    if os_name == "Windows":
+        return f"[dim]Running on Windows {release} ({menu_mode} Mode)[/]"
+    elif os_name == "Linux":
+        return f"[dim]Running on Linux {release} ({menu_mode} Mode)[/]"
+    elif os_name == "Darwin":
+        return f"[dim]Running on macOS {release} ({menu_mode} Mode)[/]"
+    else:
+        return f"[dim]Running on {os_name} ({menu_mode} Mode)[/]"
+
 def clear_screen(console: Console) -> None:
     console.clear()
 
@@ -30,9 +50,16 @@ def header_art() -> str:
 def safe_filename(name: str) -> str:
     return re.sub(r'[\\/*?:"<>|]+', "_", (name or "")).strip() or "file"
 
+def get_full_header() -> str:
+    """Return art + system info for consistent UI."""
+    h = header_art().rstrip()
+    s = get_system_label()
+    return f"[bold magenta]{h}[/]\n{s}"
+
 def section(console: Console, title: str, subtitle: str = "") -> None:
     clear_screen(console)
-    msg = f"[bold magenta]{header_art()}[/]\n[bold]{title}[/]"
+    full = get_full_header()
+    msg = f"{full}\n\n[bold]{title}[/]"
     if subtitle:
         msg += f"\n[dim]{subtitle}[/]"
     console.print(Panel.fit(msg, border_style="magenta"))
@@ -60,7 +87,8 @@ class Menu:
         while True:
             # Render
             self.console.clear()
-            msg = f"[bold magenta]{header_art()}[/]\n[bold]{self.title}[/]"
+            full = get_full_header()
+            msg = f"{full}\n\n[bold]{self.title}[/]"
             if self.subtitle:
                 msg += f"\n[dim]{self.subtitle}[/]"
             self.console.print(Panel.fit(msg, border_style="magenta"))
@@ -117,7 +145,8 @@ class Menu:
         while True:
             # Render
             self.console.clear()
-            msg = f"[bold magenta]{header_art()}[/]\n[bold]{self.title}[/]"
+            full = get_full_header()
+            msg = f"{full}\n\n[bold]{self.title}[/]"
             if self.subtitle:
                 msg += f"\n[dim]{self.subtitle}[/]"
             self.console.print(Panel.fit(msg, border_style="magenta"))
@@ -200,7 +229,8 @@ class FolderPicker:
 
             # Render
             clear_screen(self.console)
-            msg = f"[bold magenta]{header_art()}[/]\n[bold]{self.title}[/]\n[dim]Current: {self.path}[/]"
+            full = get_full_header()
+            msg = f"{full}\n\n[bold]{self.title}[/]\n[dim]Current: {self.path}[/]"
             self.console.print(Panel.fit(msg, border_style="magenta"))
 
             lines = []

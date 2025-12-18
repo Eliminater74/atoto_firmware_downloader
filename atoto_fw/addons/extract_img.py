@@ -47,8 +47,8 @@ def _addon_extract_img(console: Console, **kwargs):
     # 1. Check for 7-Zip
     exe_7z = find_7zip()
     if not exe_7z:
-        console.print("[red]Error:[/] [bold]7z.exe[/] not found.")
-        console.print("Please install 7-Zip or ensure it is in your PATH.")
+        console.print("[red]Error:[/] [bold]7z[/] header executable not found.")
+        console.print("Please install 7-Zip (Windows) or p7zip-full (Linux).")
         if not Confirm.ask("Back", default=True):
             return
         return
@@ -127,8 +127,9 @@ This tool is provided for [cyan]VIEWING[/] and [cyan]ANALYSIS[/] only.
         console.line()
         console.print(f"Target: [bold]{target_img.name}[/]")
         console.print(f"Output: [bold]{out_dir.name}[/]")
-        console.print("[yellow]Note: Extracted files on Windows lose Linux permissions.[/]")
-        console.print("[yellow]      Repacking them back to .img might result in a non-bootable system.[/]")
+        if os.name == 'nt':
+            console.print("[yellow]Note: Extracted files on Windows lose Linux permissions.[/]")
+            console.print("[yellow]      Repacking them back to .img might result in a non-bootable system.[/]")
         
         if Confirm.ask("Proceed with extraction?", default=True):
             if out_dir.exists():
@@ -157,7 +158,19 @@ This tool is provided for [cyan]VIEWING[/] and [cyan]ANALYSIS[/] only.
                     console.print(f"[green]Success![/] Extracted to: {out_dir}")
                     # Open folder?
                     if Confirm.ask("Open extracted folder?", default=True):
-                        os.startfile(out_dir)
+                        # Cross-platform open
+                        try:
+                            if os.name == 'nt':
+                                os.startfile(out_dir)
+                            elif shutil.which("xdg-open"):
+                                subprocess.call(["xdg-open", str(out_dir)])
+                            elif shutil.which("open"): # macOS
+                                subprocess.call(["open", str(out_dir)])
+                            else:
+                                console.print(f"[dim]Cannot open folder automatically. Path: {out_dir}[/]")
+                        except Exception as e:
+                             console.print(f"[red]Failed to open folder:[/] {e}")
+
                 else:
                     console.print(f"[red]Extraction failed with code {proc.returncode}[/]")
                     
