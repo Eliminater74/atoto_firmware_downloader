@@ -29,6 +29,7 @@ __all__ = ["register", "available"]
 _MODULE_CANDIDATES = (
     "extract_zip",        # new unzipper
     "extract_img",        # new img extractor (7-Zip)
+    "inspect_fw",         # new firmware inspector
     "repack_ota",         # new repacker
     "firmware_workflow",  # new step-by-step firmware tools
     "ota_extract",        # your modular OTA extractor
