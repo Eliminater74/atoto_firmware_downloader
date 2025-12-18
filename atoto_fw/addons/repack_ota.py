@@ -129,6 +129,53 @@ def repack_image(console: Console, target_img: Path) -> Optional[Path]:
         # Failed, but maybe kept .dat
         return None
 
+def _update_op_list(console: Console, root: Path):
+    """Scan and update dynamic_partitions_op_list with actual .img sizes."""
+    op_file = root / "dynamic_partitions_op_list"
+    if not op_file.exists():
+        return
+
+    console.print(f"\nScanning [bold]{op_file.name}[/] to update sizes...")
+    try:
+        lines = op_file.read_text(encoding="utf-8").splitlines()
+    except Exception as e:
+        console.print(f"[red]Failed to read op list:[/] {e}")
+        return
+
+    new_lines = []
+    changes = 0
+    import re
+
+    for line in lines:
+        # Looking for: resize <partition> <size>
+        # e.g. "resize system 1168039936"
+        match = re.match(r"^\s*resize\s+(\w+)\s+(\d+)", line)
+        if match:
+            part_name = match.group(1)
+            old_size = int(match.group(2))
+            
+            # Check if we have a matching .img
+            img_path = root / f"{part_name}.img"
+            if img_path.exists():
+                actual_size = img_path.stat().st_size
+                if actual_size != old_size:
+                    console.print(f"  - Updating [cyan]{part_name}[/]: {old_size} -> [bold green]{actual_size}[/]")
+                    new_lines.append(f"resize {part_name} {actual_size}")
+                    changes += 1
+                    continue
+        
+        # Keep original line if no match or no change
+        new_lines.append(line)
+
+    if changes > 0:
+        try:
+            op_file.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+            console.print(f"[green]Updated {changes} entries in {op_file.name}.[/]")
+        except Exception as e:
+            console.print(f"[red]Failed to write op list:[/] {e}")
+    else:
+        console.print("[dim]No size changes needed.[/]")
+
 def _addon_repack(console: Console, **kwargs):
     section(console, "Repack Firmware Image", "Convert .img -> .new.dat.br + .transfer.list")
     
@@ -177,11 +224,11 @@ def _addon_repack(console: Console, **kwargs):
     console.print(f"Selected {len(selected_imgs)} files.")
     
     for img in selected_imgs:
-        res = repack_image(console, img)
-        if res:
-            temp_dats.append(res)
             processed_imgs.append(img)
             
+    # Auto-update dynamic_partitions_op_list
+    _update_op_list(console, root)
+
     # Cleanup .dat (intermediate)
     if temp_dats:
         console.line()
