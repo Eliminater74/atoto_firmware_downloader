@@ -125,7 +125,7 @@ class Menu:
             lines = []
             for i, (label, _) in enumerate(self.items):
                 cursor = "➤ " if i == self.idx else "  "
-                box = "[green][x][/]" if i in selected_indices else "[ ]"
+                box = "[bold green][X][/]" if i in selected_indices else "[dim][ ][/]"
                 style = "reverse bold cyan" if i == self.idx else ""
                 
                 # Strip existing color markup from label for cleanliness if needed, 

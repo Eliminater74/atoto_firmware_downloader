@@ -224,6 +224,9 @@ def _addon_repack(console: Console, **kwargs):
     console.print(f"Selected {len(selected_imgs)} files.")
     
     for img in selected_imgs:
+        res = repack_image(console, img)
+        if res:
+            temp_dats.append(res)
             processed_imgs.append(img)
             
     # Auto-update dynamic_partitions_op_list
