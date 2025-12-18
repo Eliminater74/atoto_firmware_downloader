@@ -70,62 +70,105 @@ def _addon_extract_img(console: Console, **kwargs):
         Confirm.ask("Back", default=True)
         return
 
-    # Menu
-    items = []
-    for p in imgs:
-        sz = p.stat().st_size / (1024*1024)
-        items.append((f"{p.name} [dim]({sz:.1f} MB)[/]", p))
-    
-    menu = Menu(console, items, title="Select Image to Extract")
-    # For now, single select to keep it simple, but we could do multi
-    target_img: Path = menu.show()
-    
-    if not target_img:
-        return
-
-    # 3. Extract
-    out_dir = root / f"{target_img.stem}_extracted"
-    
-    console.line()
-    console.print(f"Target: [bold]{target_img.name}[/]")
-    console.print(f"Output: [bold]{out_dir.name}[/]")
-    console.print("[yellow]Note: Extracted files on Windows lose Linux permissions.[/]")
-    console.print("[yellow]      Repacking them back to .img might result in a non-bootable system.[/]")
-    
-    if Confirm.ask("Proceed with extraction?", default=True):
-        if out_dir.exists():
-            console.print(f"[yellow]Output folder exists.[/]")
-            if not Confirm.ask("Overwrite (7-Zip will merge/overwrite)?", default=True):
-                return
-        else:
-            out_dir.mkdir(parents=True, exist_ok=True)
-            
-        console.print("Extracting...")
-        # 7z x -y -o<out> <in>
-        cmd = [exe_7z, "x", "-y", f"-o{str(out_dir)}", str(target_img)]
+    # Menu Loop
+    while True:
+        items = []
+        for p in imgs:
+            sz = p.stat().st_size / (1024*1024)
+            items.append((f"{p.name} [dim]({sz:.1f} MB)[/]", p))
         
-        try:
-            # We assume 7z outputs to stdout, which we can capture or let flow
-            # Let's let it flow but indented? Or capture and show spinner?
-            # 7z output is verbose. Let's redirect to pipe and update spinner.
-            
-            with subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True) as proc:
-                 while True:
-                    line = proc.stdout.readline()
-                    if not line: break
-                    # print(line.strip()) # Debug
-            
-            if proc.returncode == 0:
-                console.print(f"[green]Success![/] Extracted to: {out_dir}")
-                # Open folder?
-                if Confirm.ask("Open extracted folder?", default=True):
-                    os.startfile(out_dir)
-            else:
-                console.print(f"[red]Extraction failed with code {proc.returncode}[/]")
-                
-        except Exception as e:
-            console.print(f"[red]Error running 7-Zip:[/] {e}")
+        # Add Help Item
+        items.append(("[bold yellow]❓ How to Repack? (Read Me)[/]", "HELP"))
+        
+        menu = Menu(console, items, title="Select Image to Extract")
+        selection = menu.show()
+        
+        if not selection:
+            return
 
+        # Show Help
+        if selection == "HELP":
+            console.clear()
+            section(console, "How to Repack?", "Why you shouldn't do this on Windows")
+            console.print(
+"""[bold red]WARNING: Windows vs. Android Permissions[/]
+
+Android runs on the Linux kernel. It relies on specific file permissions and ownership rules 
+(e.g., [bold]root, system, shell[/]) for every file in the image.
+
+[bold]The Problem:[/]
+When you extract these files to Windows (NTFS), those Linux permissions are [bold]LOST[/].
+Windows replaces them with generic "Administrator" permissions.
+
+[bold]The Risk:[/]
+If you try to pack these "Windows-owned" files back into an Android system image:
+1. The repacker won't know which file belongs to 'root' or 'system'.
+2. The resulting image will have incorrect permissions.
+3. [bold red]Your device will likely Bootloop or Crash[/] because Android security (SELinux) will reject the files.
+
+[bold]The Solution:[/]
+If you need to [green]MODIFY[/] and [green]REPACK[/] an image:
+- Use **WSL (Windows Subsystem for Linux)** (Ubuntu).
+- Use a **Linux Virtual Machine**.
+- Only on native Linux filesystems can you preserve these permissions correctly.
+
+This tool is provided for [cyan]VIEWING[/] and [cyan]ANALYSIS[/] only.
+"""
+            )
+            Confirm.ask("Got it. Press Enter to return.", default=True)
+            continue
+
+        # Extract Logic (selection is a Path)
+        target_img: Path = selection
+
+        # 3. Extract
+        out_dir = root / f"{target_img.stem}_extracted"
+        
+        console.line()
+        console.print(f"Target: [bold]{target_img.name}[/]")
+        console.print(f"Output: [bold]{out_dir.name}[/]")
+        console.print("[yellow]Note: Extracted files on Windows lose Linux permissions.[/]")
+        console.print("[yellow]      Repacking them back to .img might result in a non-bootable system.[/]")
+        
+        if Confirm.ask("Proceed with extraction?", default=True):
+            if out_dir.exists():
+                console.print(f"[yellow]Output folder exists.[/]")
+                if not Confirm.ask("Overwrite (7-Zip will merge/overwrite)?", default=True):
+                    continue # Back to menu
+            else:
+                out_dir.mkdir(parents=True, exist_ok=True)
+                
+            console.print("Extracting...")
+            # 7z x -y -o<out> <in>
+            cmd = [exe_7z, "x", "-y", f"-o{str(out_dir)}", str(target_img)]
+            
+            try:
+                # We assume 7z outputs to stdout, which we can capture or let flow
+                # Let's let it flow but indented? Or capture and show spinner?
+                # 7z output is verbose. Let's redirect to pipe and update spinner.
+                
+                with subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True) as proc:
+                     while True:
+                        line = proc.stdout.readline()
+                        if not line: break
+                        # print(line.strip()) # Debug
+                
+                if proc.returncode == 0:
+                    console.print(f"[green]Success![/] Extracted to: {out_dir}")
+                    # Open folder?
+                    if Confirm.ask("Open extracted folder?", default=True):
+                        os.startfile(out_dir)
+                else:
+                    console.print(f"[red]Extraction failed with code {proc.returncode}[/]")
+                    
+            except Exception as e:
+                console.print(f"[red]Error running 7-Zip:[/] {e}")
+        
+        # After extraction, stay or exit? Usually exit addon.
+        # Let's loop so user can extract another or exit manually.
+        continue # Ask loop
+    
+    # End of loop (unreachable unless return/break)
     Confirm.ask("Done. Press Enter to return.", default=True)
 
 # Register
