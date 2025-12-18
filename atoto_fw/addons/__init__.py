@@ -28,6 +28,7 @@ __all__ = ["register", "available"]
 # Order matters only for how they appear in the menu.
 _MODULE_CANDIDATES = (
     "extract_zip",        # new unzipper
+    "extract_img",        # new img extractor (7-Zip)
     "repack_ota",         # new repacker
     "firmware_workflow",  # new step-by-step firmware tools
     "ota_extract",        # your modular OTA extractor
