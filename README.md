@@ -33,6 +33,11 @@ Located in the **Advanced / Add-ons** menu:
     *   "X-Ray" vision for firmware folders.
     *   Identifies every file type: **Kernel**, **Bootloader** (Dangerous), **Modem**, **TrustZone**, **Partition Data**.
     *   Color-coded safety guide (Red = Raw Hardware Binary, Blue = Repackable Partition).
+*   **Firmware Password Finder**:
+    *   **Automated Cracking**: Scans update binaries (e.g., `lsec6315update`) for hardcoded encryption keys.
+    *   **Targeted Unlocking**: Automatically attempts to unlock encrypted archives like `AllAppUpdate.bin`.
+    *   **Smart Heuristics**: Detects 32-character hex keys used in ATOTO's update process.
+    *   **Outcome**: Successfully recovers hidden APKs and libs from password-protected firmware containers.
 
 ### 3. Cross-Platform
 *   **Windows**: Native support (uses `msvcrt` for menus, bundled/system 7-Zip).
