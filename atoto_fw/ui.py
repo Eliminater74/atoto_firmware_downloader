@@ -187,15 +187,17 @@ def render_and_pick(
             ("variants", "Variants"), ("fit", "Fit"), ("url", "URL")
         ]
         
-        # Specific styling per column to ensure Date/Size remain visible
+        # Specific styling to ensure all columns fit
         col_specs = {
-            "Title": {"ratio": 3, "overflow": "ellipsis", "no_wrap": True},
-            "URL":   {"ratio": 1, "overflow": "ellipsis", "no_wrap": True},
-            "Ver":   {"max_width": 25, "overflow": "ellipsis", "no_wrap": True},
-            "Date":  {"no_wrap": True},
-            "Size":  {"no_wrap": True},
+            "Title": {"max_width": 40, "overflow": "ellipsis", "no_wrap": True},
+            "URL":   {"max_width": 30, "overflow": "ellipsis", "no_wrap": True},
+            "Ver":   {"max_width": 20, "overflow": "ellipsis", "no_wrap": True},
+            "Date":  {"no_wrap": True, "min_width": 10},
+            "Size":  {"no_wrap": True, "min_width": 8},
             "Res":   {"no_wrap": True},
             "Src":   {"no_wrap": True},
+            "Scope": {"max_width": 15, "overflow": "ellipsis", "no_wrap": True},
+            "Variants": {"max_width": 10, "overflow": "fold"},
         }
 
         for _, hdr in cols:
