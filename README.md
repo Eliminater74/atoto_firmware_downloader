@@ -1,11 +1,11 @@
 # ⚡ ATOTO Firmware Downloader & Modding Toolkit (v2 Beta)
 
-![Visitor Count](https://komarev.com/ghpvc/?username=Eliminater74-atoto_firmware_downloader&label=Views&color=blue&style=flat)
+![Visitor Count](https://hits.seeyoufarm.com/api/count/incr/badge.svg?url=https%3A%2F%2Fgithub.com%2FEliminater74%2Fatoto_firmware_downloader&count_bg=%2379C83D&title_bg=%23555555&icon=&icon_color=%23E7E7E7&title=hits&edge_flat=false)
 
 
 A powerful, open-source utility to **find, download, and modify** firmware for ATOTO head units (S8, A6, F7, P8, etc.).
 
-> **🚀 Beta Branch**: This branch (`beta`) contains the new **v2** engine with Repacker, Extractor, and Inspector tools.
+> **🚀 v2 Released!**: Complete rewrite with Deep Search, Password Cracker, and Firmware Repacker.
 
 ---
 
