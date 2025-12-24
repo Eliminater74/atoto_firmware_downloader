@@ -187,7 +187,9 @@ def render_and_pick(
             ("variants", "Variants"), ("fit", "Fit"), ("url", "URL")
         ]
         for _, hdr in cols:
-            table.add_column(hdr, overflow="fold")
+            # Prevent wrapping for cleaner list
+            nw = True if hdr in ("Title", "Ver", "URL", "Date", "Size") else False
+            table.add_column(hdr, overflow="fold" if not nw else "ellipsis", no_wrap=nw)
 
         # Rendering for specific index
         for i, r in enumerate(filt):
