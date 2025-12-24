@@ -299,7 +299,7 @@ def download_with_progress(url: str, out_path: Path, expected_hash: str = "") ->
             console.print("[green]Checksum OK[/]")
 
 # ────────────────────────── Search & Download flow ──────────────────────────
-def run_search_download_flow(profile: Dict[str, Any], out_base: Path, verbose: bool) -> None:
+def run_search_download_flow(profile: Dict[str, Any], out_base: Path, verbose: bool, deep_scan: bool = False) -> None:
     model = profile.get("model", "").strip() or Prompt.ask("Model / Device", default="S8EG2A74MSB").strip()
     mcu   = profile.get("mcu", "").strip()
     my_res = profile.get("res", "1280x720").strip()
@@ -320,7 +320,7 @@ def run_search_download_flow(profile: Dict[str, Any], out_base: Path, verbose: b
             if verbose:
                 console.log(msg)
 
-        rows, hits = try_lookup(model, mcu, progress=progress_cb)
+        rows, hits = try_lookup(model, mcu, progress=progress_cb, deep_scan=deep_scan)
 
     # optional verbose normalization view
     if verbose:
@@ -434,6 +434,7 @@ def main_menu(out_dir: Path) -> None:
         
         items = [
             ("Quick Search [dim](use default profile)[/]", "QUICK"),
+            ("Deep Search [dim](slow, aggressive probing)[/]", "DEEP"),
             ("Profiles [dim](create/edit/select)[/]", "PROFILES"),
             ("Ad-hoc Search [dim](don't save)[/]", "ADHOC"),
             ("Manual URL Download", "MANUAL"),
@@ -466,6 +467,17 @@ def main_menu(out_dir: Path) -> None:
             p = profile_menu(cfg)
             if p and Confirm.ask("Run Quick Search with this profile now?", default=True):
                 run_search_download_flow(p, out_dir, cfg.get("verbose", False))
+
+        elif ans == "DEEP":
+            name = cfg.get("last_profile", "")
+            p = None
+            if name and name in cfg["profiles"]:
+                p = cfg["profiles"][name]
+            else:
+                p = profile_menu(cfg)
+            
+            if p:
+                run_search_download_flow(p, out_dir, cfg.get("verbose", False), deep_scan=True)
 
         elif ans == "ADHOC":
             p = prompt_profile({})

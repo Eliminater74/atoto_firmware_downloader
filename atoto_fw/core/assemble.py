@@ -7,10 +7,15 @@ from .discovery.json_probe import discover_packages_via_json
 from .discovery.mirrors import known_links_for_model
 from .grouping import dedupe_rows
 
-def try_lookup(model: str, mcu: str, progress=None) -> Tuple[List[Dict[str,Any]], List[str]]:
+def try_lookup(model: str, mcu: str, progress=None, deep_scan: bool = False) -> Tuple[List[Dict[str,Any]], List[str]]:
     cands = normalize_candidates(model)
     hits: List[str] = []
     merged: List[Dict[str,Any]] = []
+
+    if deep_scan:
+        if "S8" in model or "6315" in model:
+            cands.append("6315")
+            cands.append("S8 Gen2")
 
     total = len(cands) or 1
     for j, cand in enumerate(cands, start=1):
