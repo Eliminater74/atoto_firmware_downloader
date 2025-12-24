@@ -19,4 +19,4 @@ def scope_from_res(res: str, title_url: str) -> str:
     if res != "?": return "Res-specific"
     import re as _re
     hint = _re.search(r"(universal|all[-_]?res|all[-_]?resolution|both[-_]?res|generic)", (title_url or "").lower())
-    return "Universal" if hint else "Universal?"
+    return "Universal" if hint else "⚠ Unknown Res"
