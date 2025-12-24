@@ -3,22 +3,30 @@
 ![Visitor Count](https://hits.sh/github.com/Eliminater74/atoto_firmware_downloader.svg?style=flat-square&label=Views)
 
 
-A powerful, open-source utility to **find, download, and modify** firmware for ATOTO head units (S8, A6, F7, P8, etc.).
+A powerful, open-source utility to **find, download, and modify** firmware for ATOTO head units (**S8, A6, F7, P8, X10**, and more).
 
-> **🚀 v2 Released!**: Complete rewrite with Deep Search, Password Cracker, and Firmware Repacker.
+> **🚀 v2.0 Released!**: Complete rewrite with Deep Search (Smart Suffix Mapping), Update Checker, Resolution Safety, and Password Recovery tools.
 
 ---
 
 ## 🔥 Features
 
-### 1. Firmware Discovery
-*   **Deep Search**: Probes the official ATOTO API, JSON endpoints, and curated public mirrors (including the US Aliyun bucket).
-*   **Smart Matching**: Automatically handles model variations (e.g., `S8EG2A74MSB` vs `S8G2A7`) and MCU versions.
-*   **Resolution Safety**: Clearly marks packages as **Universal** or **Res-Specific** (1024x600 vs 1280x720) to prevent bricking.
-*   **Live Status**: Real-time spinner showing exactly what sources are being probed.
+### 1. Advanced Discovery
+*   **Smart Matching**: Automatically translates Retail Models (e.g., `S8EG2A74MSB`, `X10G2A74SD`) into their internal Platform IDs (e.g., `S8G2A7PE`, `X10`) to find hidden updates.
+*   **Deep Search**: Scans across **all** firmware families (S8, A6, F7, P8, X10) using aggressive suffix probing and deep JSON inspection.
+*   **Mirror Metadata**: Accurately extracts **File Size**, **Release Date**, and **Version** headers even from static mirror files.
+*   **Auto-Update Checker**: Notifies you instantly when a new version of this tool is available on GitHub.
 
-### 2. Modding Tools (New!)
+### 2. Safety First
+*   **Resolution Guard**: Warns you if a package's resolution (`1024x600` vs `1280x720`) is unknown ("⚠ Unknown Res") or mismatches your profile, preventing "half-screen" glitches.
+*   **Live Status**: Real-time indication of exactly which endpoints and mirrors are being probed.
+
+### 3. Modding Tools (New!)
 Located in the **Advanced / Add-ons** menu:
+*   **Firmware Password Finder**:
+    *   **Automated Cracking**: Scans update binaries (e.g., `lsec6315update`) for hardcoded encryption keys.
+    *   **Targeted Unlocking**: Automatically attempts to unlock encrypted archives like `AllAppUpdate.bin`.
+    *   **Smart Heuristics**: Detects 32-character hex keys used in ATOTO's update process.
 *   **Firmware Repacker**:
     *   Converts `system.img` (Ext4) → `system.new.dat.br` (Brotli).
     *   Generates the correct `transfer.list` and `patch.dat`.
@@ -27,19 +35,12 @@ Located in the **Advanced / Add-ons** menu:
 *   **Image Extractor**:
     *   Deep integration with **7-Zip**.
     *   Extracts contents of `system.img`, `vendor.img`, etc. to a folder.
-    *   Great for inspecting APKs, configs, or drivers.
-    *   *Note: On Windows, use for inspection only (permissions are not preserved).*
 *   **File Inspector**:
     *   "X-Ray" vision for firmware folders.
-    *   Identifies every file type: **Kernel**, **Bootloader** (Dangerous), **Modem**, **TrustZone**, **Partition Data**.
+    *   Identifies every file type: **Kernel**, **Bootloader** (Dangerous), **Modem**, **TrustZone**.
     *   Color-coded safety guide (Red = Raw Hardware Binary, Blue = Repackable Partition).
-*   **Firmware Password Finder**:
-    *   **Automated Cracking**: Scans update binaries (e.g., `lsec6315update`) for hardcoded encryption keys.
-    *   **Targeted Unlocking**: Automatically attempts to unlock encrypted archives like `AllAppUpdate.bin`.
-    *   **Smart Heuristics**: Detects 32-character hex keys used in ATOTO's update process.
-    *   **Outcome**: Successfully recovers hidden APKs and libs from password-protected firmware containers.
 
-### 3. Cross-Platform
+### 4. Cross-Platform
 *   **Windows**: Native support (uses `msvcrt` for menus, bundled/system 7-Zip).
 *   **Linux**: Native support (uses `xdg-open` for folders, `7z`/`p7zip` for extraction).
 *   **macOS**: Native support.
@@ -51,13 +52,12 @@ Located in the **Advanced / Add-ons** menu:
 **Requirements**: Python 3.9+
 
 ```bash
-# 1. Clone the repository (and checkout beta)
+# 1. Clone the repository
 git clone https://github.com/Eliminater74/atoto_firmware_downloader.git
 cd atoto_firmware_downloader
-git checkout beta
 
 # 2. Install dependencies
-pip install requests rich brotli
+pip install requests rich brotli regex
 
 # 3. Run the tool
 python atoto.py
@@ -71,15 +71,19 @@ python atoto.py
 Just run `python atoto.py` to enter the TUI (Text User Interface).
 
 *   **Quick Search**: Uses your saved profile to find updates instantly.
-*   **Profiles**: Save your Head Unit details (Model: `S8G2A74MS`, MCU: `YFEN_53...`, Res: `1280x720`).
+*   **Deep Search**: Enables "Aggressive Suffix Probing" to find firmware for generic models (e.g. finds `S8 Gen2` updates for `S8EG2A74MSB`).
+*   **Profiles**: Save your Head Unit details.
+    *   **Model**: E.g., `S8EG2A74MSB` (Retail Name) or `ATL-S8-HU` (System Name).
+    *   **MCU**: Optional. Helps filter mostly, but not required.
+    *   **Resolution**: Critical. Use `1280x720` for QLED/S8 models, `1024x600` for others.
 *   **Manual URL**: Paste a direct `file.myatoto.com` link (useful if Support sends you a private link).
-*   **Advanced / Add-ons**: Access the **Repacker**, **Extractor**, and **Inspector**.
+*   **Advanced / Add-ons**: Access the **Repacker**, **Extractor**, **Inspector**, and **Password Finder**.
 
 ### CLI Mode (Automation)
 You can also run search commands directly:
 
 ```bash
-# Search for S8 Gen 2 firmware
+# Search for specific model
 python atoto.py --model "S8EG2A74MSB" --res 1280x720
 
 # Download from a specific URL
@@ -100,12 +104,6 @@ python atoto.py --manual "https://file.myatoto.com/..."
     *   Select your modified `.img` files.
     *   The tool will generate fresh `.new.dat.br`, `.transfer.list`, and update the partition map.
 5.  **Zip & Flash**: Replace the files in the original zip and flash!
-
-### Warning on Windows
-Windows filesystems (NTFS) do not support Linux permissions (chmod/chown/capabilities).
-*   **Safe**: Extracting images to *look* at files.
-*   **Unsafe**: Modifying and repacking images on Windows to flash back to the device. (Result: Bootloop).
-*   **Solution**: Use WSL (Windows Subsystem for Linux) or a Linux VM for the actual modification step.
 
 ---
 
