@@ -1,6 +1,6 @@
 import re
 from typing import Any, Dict, List
-from ..utils import head_ok, url_leaf_name
+from ..utils import head_info, url_leaf_name, human_size
 
 KNOWN_LINKS: List[Dict[str,str]] = [
     {
@@ -25,10 +25,37 @@ def known_links_for_model(model: str) -> List[Dict[str, Any]]:
     for entry in KNOWN_LINKS:
         if re.search(entry["match"], model):
             url = entry["url"]
-            if head_ok(url):
-                title = entry.get("title") or url_leaf_name(url)
-                import re as _re
-                ver = _re.findall(r'([rv]?[\d._-]+)', url_leaf_name(url).replace(" ",""))[:1] or ["N/A"]
-                out.append({"id":"0","title":f"[mirror] {title}","version":ver[0],"date":"","size":None,"url":url,"hash":"","source":"MIRROR"})
+            info = head_info(url, timeout=3)
+            
+            if info["ok"]:
+                fname = url_leaf_name(url)
+                title = entry.get("title") or fname
+                
+                # Smart parse version/date from filename like 6315-SYSTEM20250401-APP20250514.zip
+                # 1. Look for YYYYMMDD patterns
+                dates = re.findall(r'(20\d{6})', fname)
+                best_date = max(dates) if dates else ""
+                
+                # 2. Extract Version: Use full filename stem (minus extension) to capture all details
+                ver = fname
+                if ver.lower().endswith(".zip"):
+                    ver = ver[:-4]
+                
+                # Format date nicely if available
+                if best_date and len(best_date) == 8:
+                    date_fmt = f"{best_date[:4]}-{best_date[4:6]}-{best_date[6:]}"
+                else:
+                    date_fmt = ""
+
+                out.append({
+                    "id": "0",
+                    "title": f"[mirror] {title}",
+                    "version": ver,
+                    "date": date_fmt,
+                    "size": info["size"], # int or None
+                    "url": url,
+                    "hash": "",
+                    "source": "MIRROR"
+                })
     for i,p in enumerate(out,1): p["id"]=str(i)
     return out

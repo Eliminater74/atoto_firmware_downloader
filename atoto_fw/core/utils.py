@@ -29,6 +29,27 @@ def head_ok(url: str, timeout: int = 10) -> bool:
     except Exception:
         return False
 
+def head_info(url: str, timeout: int = 10) -> Dict[str, Any]:
+    """Returns {ok, size, date} from HEAD request."""
+    default = {"ok": False, "size": None, "date": ""}
+    try:
+        r = SESSION.head(url, timeout=timeout, allow_redirects=True)
+        if r.status_code >= 400:
+            # Try GET stream if HEAD fails (sometimes servers block HEAD)
+            r = SESSION.get(url, timeout=timeout, stream=True)
+            r.close() # just reading headers
+        
+        if r.status_code < 400:
+            sz = r.headers.get("Content-Length")
+            return {
+                "ok": True,
+                "size": int(sz) if sz and sz.isdigit() else None,
+                "date": r.headers.get("Last-Modified",""),
+            }
+    except Exception:
+        pass
+    return default
+
 def fetch_json(url: str, timeout: int = 15) -> Any:
     r = SESSION.get(url, timeout=timeout)
     r.raise_for_status()
