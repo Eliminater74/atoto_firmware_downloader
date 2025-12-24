@@ -26,6 +26,7 @@ RETAIL_TO_CANONICAL: Dict[str, List[str]] = {
 COMMON_VARIANTS = [
     "-S01","-S10","-S01W","-S10W","-S01R","-S10R",
     "S01","S10","S01W","S10W","S01R","S10R",
+    "-BETA", "-TEST", "_BETA", "_TEST",
 ]
 
 def series_from_model(q: str) -> List[str]:
