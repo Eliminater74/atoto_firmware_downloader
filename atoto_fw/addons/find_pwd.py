@@ -70,7 +70,12 @@ def run_find_pwd_tool(console):
     console.print(f"[dim]Includes {len(KNOWN_KEYS)} known hardcoded fallback keys.[/]")
     
     # Default to current directory or ask user
-    start_dir_str = Prompt.ask("Scan directory", default=os.getcwd())
+    from atoto_fw.tui import FolderPicker
+    start_dir_str = FolderPicker(console, start_path=os.getcwd(), title="Select Scan Directory").show()
+    
+    if not start_dir_str:
+        return
+
     start_dir = Path(start_dir_str)
     
     if not start_dir.exists():
