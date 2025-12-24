@@ -54,7 +54,7 @@ def prompt_profile(existing: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     prof = dict(existing or {})
     prof["name"]  = Prompt.ask("Profile name", default=prof.get("name", "My S8"))
     prof["model"] = Prompt.ask("Model / Device name", default=prof.get("model", "S8EG2A74MSB")).upper().strip()
-    prof["mcu"]   = Prompt.ask("MCU version (blank if unknown)", default=prof.get("mcu", "")).strip()
+    prof["mcu"]   = Prompt.ask("MCU version (Optional - helps find newer firmware)", default=prof.get("mcu", "")).strip()
     prof["res"]   = Prompt.ask("Display resolution", default=prof.get("res", "1280x720")).strip()
 
     vdefault = prof.get("variants", "ANY")

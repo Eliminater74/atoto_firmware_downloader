@@ -15,7 +15,8 @@ Model normalization helpers.
 # Retail → canonical family hints (extend as needed)
 RETAIL_TO_CANONICAL: Dict[str, List[str]] = {
     # S8 Gen2, 4GB+32GB bottom-keys “MS” family
-    "S8EG2A74MSB": ["S8G2A74MS-S01", "S8G2A74MS-S10", "S8G2A74MS"],
+    "S8EG2A74MSB": ["S8G2A74MS", "S8G2A7PE", "S8G2A74MS-S01"],
+    "S8EG2A7PE":   ["S8G2A7PE", "S8G2A74MS"],
     "ATL-S8-HU":   ["S8G2A74MS-S01", "S8G2A74MS-S10", "S8G2A74MS"],
 
     # “B” side-keys “PM” family example
