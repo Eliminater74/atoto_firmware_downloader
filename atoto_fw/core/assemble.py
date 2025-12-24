@@ -16,6 +16,14 @@ def try_lookup(model: str, mcu: str, progress=None, deep_scan: bool = False) -> 
         if "S8" in model or "6315" in model:
             cands.append("6315")
             cands.append("S8 Gen2")
+        if "X10" in model:
+            cands.append("X10")
+        if "A6" in model:
+            cands.append("A6")
+        if "F7" in model:
+            cands.append("F7")
+        if "P8" in model:
+            cands.append("P8")
 
     total = len(cands) or 1
     for j, cand in enumerate(cands, start=1):
