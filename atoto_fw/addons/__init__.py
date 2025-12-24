@@ -35,6 +35,7 @@ _MODULE_CANDIDATES = (
     "ota_extract",        # your modular OTA extractor
     "extract_ota",        # legacy/alt name (if present)
     "extrator_ota",       # typo variant kept for compatibility
+    "find_pwd",           # firmware password finder
 )
 
 for mod in _MODULE_CANDIDATES:
