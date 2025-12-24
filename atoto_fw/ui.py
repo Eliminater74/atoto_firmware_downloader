@@ -50,6 +50,7 @@ console = Console()
 
 # ────────────────────────── Profile UI ──────────────────────────
 def prompt_profile(existing: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    clear_screen(console)
     console.print(Panel.fit("Create / Edit Profile", border_style="cyan"))
     prof = dict(existing or {})
     prof["name"]  = Prompt.ask("Profile name", default=prof.get("name", "My S8"))
@@ -367,10 +368,30 @@ def run_search_download_flow(profile: Dict[str, Any], out_base: Path, verbose: b
         )
         return
 
-    chosen = render_and_pick(rows, my_res, prefer_universal, variants_pref)
-    if not chosen:
-        section(console, "Canceled")
-        return
+    while True:
+        chosen = render_and_pick(rows, my_res, prefer_universal, variants_pref)
+        if not chosen:
+            section(console, "Canceled")
+            return
+
+        # Show full details before confirming
+        console.print(Panel(
+            f"[bold cyan]Title:[/] {chosen.get('title')}\n"
+            f"[bold cyan]Version:[/] {chosen.get('version')}\n"
+            f"[bold cyan]Date:[/] {chosen.get('date')}\n"
+            f"[bold cyan]Size:[/] {human_size(chosen.get('size'))}\n"
+            f"[bold cyan]Resolution:[/] {chosen.get('res')}\n"
+            f"[bold cyan]Scope:[/] {chosen.get('scope')}\n"
+            f"[bold cyan]URL:[/] [link={chosen.get('url')}]{chosen.get('url')}[/]",
+            title="📦 Selected Package Details",
+            border_style="green",
+            expand=False
+        ))
+
+        if Confirm.ask("Download this firmware?", default=True):
+            break
+        # If 'No', loop back to list
+        console.print("[dim]Returning to list...[/]")
 
     model_for_path = (hits[0] if hits else model)
     out_dir = out_base / safe_filename(model_for_path)

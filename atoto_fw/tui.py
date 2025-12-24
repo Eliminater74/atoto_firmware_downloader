@@ -36,7 +36,14 @@ def get_system_label() -> str:
         return f"[dim]Running on {os_name} ({menu_mode} Mode)[/]"
 
 def clear_screen(console: Console) -> None:
+    # Try rich clear first
     console.clear()
+    # Force OS-level clear to fix "overwrite" issues on some Windows terminals
+    import os
+    try:
+        os.system('cls' if os.name == 'nt' else 'clear')
+    except Exception:
+        pass
 
 def header_art() -> str:
     return r"""
