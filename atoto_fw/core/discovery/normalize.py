@@ -27,6 +27,7 @@ COMMON_VARIANTS = [
     "-S01","-S10","-S01W","-S10W","-S01R","-S10R",
     "S01","S10","S01W","S10W","S01R","S10R",
     "-BETA", "-TEST", "_BETA", "_TEST",
+    "-DEBUG", "_DEBUG",
 ]
 
 def series_from_model(q: str) -> List[str]:
