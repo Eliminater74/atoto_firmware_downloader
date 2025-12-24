@@ -428,8 +428,34 @@ def manual_url_flow(download_dir: Path) -> None:
 
 # ────────────────────────── Main menu ──────────────────────────
 def main_menu(out_dir: Path) -> None:
+    # ─── Update Check (Background) ───
+    try:
+        from . import __version__ as app_ver
+        from .core.utils import check_github_update
+        import threading
+        # We'll attach this dict to the function or use a mutable local
+        # A simple mutable list works to pass data from thread
+        update_info = [] 
+        def _check():
+            res = check_github_update(app_ver)
+            if res:
+                update_info.append(res) # (tag, url)
+
+        # Only check once per run
+        if not hasattr(main_menu, "_checked"):
+            t = threading.Thread(target=_check, daemon=True)
+            t.start()
+            main_menu._checked = True
+    except ImportError:
+        update_info = []
+
     cfg = load_cfg()
     while True:
+        # Show update banner if found
+        if update_info:
+            ver, url = update_info[0]
+            console.print(Panel(f"🚀 [bold green]New Version Available: v{ver}[/]\n[link={url}]Click here to download[/]", border_style="green", expand=False), justify="center")
+
         default_name = cfg.get("last_profile") or "(none)"
         
         items = [

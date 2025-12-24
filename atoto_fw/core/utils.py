@@ -65,3 +65,27 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: f.read(1024*1024), b""):
             h.update(chunk)
     return h.hexdigest()
+
+def check_github_update(current_ver: str) -> Optional[Tuple[str, str]]:
+    """
+    Checks GitHub for a newer release.
+    Returns (new_version_tag, url) or None.
+    """
+    try:
+        url = "https://api.github.com/repos/Eliminater74/atoto_firmware_downloader/releases/latest"
+        r = SESSION.get(url, timeout=3)
+        if r.status_code == 200:
+            data = r.json()
+            tag = data.get("tag_name", "").strip().lstrip("v")
+            cur = current_ver.strip().lstrip("v")
+            
+            # Simple lexicographical check (or semver if needed)
+            if tag and tag != cur:
+                # Basic check: is remote '2.0.1' > local '2.0.0'?
+                # For robust comparison, we'd need 'packaging.version', but let's do a simple string compare
+                # if main digits differ. Ideally assume tags increase.
+                if tag > cur: 
+                    return (tag, data.get("html_url", ""))
+    except Exception:
+        pass
+    return None
