@@ -5,6 +5,13 @@ from typing import Dict, List
 """
 Model normalization helpers.
 
+Retail vs. Platform ID:
+- Retail Models (e.g. "S8G2A74MS", "S8EG2A74MSB") are specific SKUs.
+- Platform IDs (e.g. "S8G2A7PE") are internal firmware identifiers.
+  "PE" = Premium Edition platform (often compatible with MS hardware).
+  "MS" = Mass Series platform.
+  We map specific Retail SKUs to multiple Platform IDs to find all compatible firmware.
+
 - normalize_candidates(raw): expands a retail code or device name into a set of
   likely canonical model strings ATOTO’s endpoints accept (e.g., S8G2A74MS-S01).
 - build_suggestions(raw): same set, but ranked to present to users.
@@ -23,10 +30,10 @@ RETAIL_TO_CANONICAL: Dict[str, List[str]] = {
     "S8EG2B74PMB": ["S8G2B74PM-S01", "S8G2B74PM-S10", "S8G2B74PM"],
 }
 
-# Common “variant” suffixes that appear in ATOTO model strings
 COMMON_VARIANTS = [
     "-S01","-S10","-S01W","-S10W","-S01R","-S10R",
     "S01","S10","S01W","S10W","S01R","S10R",
+    "-S02F", "-S04", "-PRN", "-S02", "-S10W",
     "-BETA", "-TEST", "_BETA", "_TEST",
     "-DEBUG", "_DEBUG",
 ]

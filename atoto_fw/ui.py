@@ -186,10 +186,24 @@ def render_and_pick(
             ("date", "Date"), ("size", "Size"), ("res", "Res"), ("scope", "Scope"),
             ("variants", "Variants"), ("fit", "Fit"), ("url", "URL")
         ]
+        
+        # Specific styling per column to ensure Date/Size remain visible
+        col_specs = {
+            "Title": {"ratio": 3, "overflow": "ellipsis", "no_wrap": True},
+            "URL":   {"ratio": 1, "overflow": "ellipsis", "no_wrap": True},
+            "Ver":   {"max_width": 25, "overflow": "ellipsis", "no_wrap": True},
+            "Date":  {"no_wrap": True},
+            "Size":  {"no_wrap": True},
+            "Res":   {"no_wrap": True},
+            "Src":   {"no_wrap": True},
+        }
+
         for _, hdr in cols:
-            # Prevent wrapping for cleaner list
-            nw = True if hdr in ("Title", "Ver", "URL", "Date", "Size") else False
-            table.add_column(hdr, overflow="fold" if not nw else "ellipsis", no_wrap=nw)
+            spec = col_specs.get(hdr, {})
+            # Default fallback
+            if not spec:
+                spec = {"overflow": "fold"}
+            table.add_column(hdr, **spec)
 
         # Rendering for specific index
         for i, r in enumerate(filt):
