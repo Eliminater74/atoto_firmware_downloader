@@ -72,6 +72,41 @@ def prompt_profile(existing: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     )
     return prof
 
+def prompt_adhoc_params() -> Optional[Dict[str, Any]]:
+    clear_screen(console)
+    console.print(Panel.fit("Ad-hoc Search (One-time)", border_style="cyan"))
+    
+    # 1. Model (Text is still best here)
+    model = Prompt.ask("Model / Device name (e.g. F7G2B7WE)", default="S8EG2A74MSB").upper().strip()
+    if not model: return None
+
+    # 2. Resolution (Menu is faster/nicer)
+    res_items = [
+        ("1280x720 (S8/A6 QLED, F7 PE)", "1280x720"),
+        ("1024x600 (Standard 7/9/10 inch)", "1024x600"),
+        ("Custom / Other", "CUSTOM")
+    ]
+    res_menu = Menu(console, res_items, title="Select Resolution", subtitle=f"Model: {model}")
+    choice = res_menu.show()
+    if not choice: return None
+    
+    if choice == "CUSTOM":
+        res = Prompt.ask("Enter resolution (e.g. 800x480)", default="1024x600").strip()
+    else:
+        res = choice
+
+    # 3. Variants (Keep simple or Menu? Let's stick to simple defaults for 'Quick')
+    # Most users just want ANY.
+    
+    return {
+        "name": "Ad-hoc",
+        "model": model,
+        "res": res,
+        "mcu": "",
+        "variants": "ANY",
+        "prefer_universal": True
+    }
+
 def profile_menu(cfg: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     while True:
         # Build menu items
@@ -545,8 +580,9 @@ def main_menu(out_dir: Path) -> None:
                 run_search_download_flow(p, out_dir, cfg.get("verbose", False), deep_scan=True)
 
         elif ans == "ADHOC":
-            p = prompt_profile({})
-            run_search_download_flow(p, out_dir, cfg.get("verbose", False))
+            p = prompt_adhoc_params()
+            if p:
+                run_search_download_flow(p, out_dir, cfg.get("verbose", False))
 
         elif ans == "MANUAL":
             manual_url_flow(out_dir / "manual")
