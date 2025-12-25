@@ -394,12 +394,15 @@ def run_search_download_flow(profile: Dict[str, Any], out_base: Path, verbose: b
             tbl.add_row(a, b)
         console.print(tbl)
 
-    if not rows:
+        if not rows:
         section(
             console,
-            "No Packages Found",
-            "Could not find firmware via API/JSON/mirrors.\n"
-            "Try a nearby model name or use Manual URL."
+            "No Packages Found (0 matches)",
+            f"[yellow]We looked everywhere for '{model}' but found no public files.[/]\n"
+            "This usually means ATOTO hasn't uploaded them to the update server.\n\n"
+            "[bold]Tips:[/]\n"
+            "1. Try a simpler model name in [cyan]Ad-hoc Search[/] (e.g. just 'F7' or 'S8').\n"
+            "2. If you have a download link from support, use [cyan]Manual URL Download[/]."
         )
         return
 
