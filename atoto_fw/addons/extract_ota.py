@@ -200,6 +200,7 @@ def run_ota_extract(
     overwrite: bool = False,
     raw: bool = False,
     progress: Optional[Callable[[str], None]] = None,
+    cleanup: bool = False,
 ) -> Dict[str,int]:
     """
     Execute OTA extraction in 'root'.
@@ -293,6 +294,35 @@ def run_ota_extract(
             else:
                 _progress_emit(progress, "    -> simg2img not found; skipping raw")
 
+    
+    # 3) Cleanup (Optional)
+    if cleanup:
+        _progress_emit(progress, "Cleaning up intermediate files...")
+        # Delete source .br files that were decompressed
+        for br in br_files:
+            try:
+                if br.exists(): br.unlink()
+            except: pass
+        
+        # Delete intermediate .new.dat and .transfer.list and .patch.dat
+        for lst in lists:
+            base = list_basename_without_transfer_dot_list(lst)
+            dirp = lst.parent
+            dat = dirp / f"{base}.new.dat"
+            patch = dirp / f"{base}.patch.dat"
+            
+            # Only delete if we successfully built an extracted image (or it existed)
+            # Actually, user wants cleanup regardless of whether WE built it just now, 
+            # assuming the goal is to have a clean folder.
+            # But let's be safe: if .img exists, we can delete the sources.
+            img = dirp / f"{base}.img"
+            if img.exists() and img.stat().st_size > 0:
+                try:
+                    if lst.exists(): lst.unlink()
+                    if dat.exists(): dat.unlink()
+                    if patch.exists(): patch.unlink()
+                except: pass
+
     _progress_emit(progress, "Done.")
     return stats
 
@@ -325,12 +355,13 @@ try:
         root = Prompt.ask("Root folder to scan", default=".")
         overwrite = Confirm.ask("Overwrite existing .new.dat / .img if present?", default=False)
         want_raw  = Confirm.ask("Also try simg2img to produce *_raw.img?", default=False)
+        cleanup   = Confirm.ask("Cleanup intermediate files? (keeps only .img)", default=False)
 
         def cb(msg: str):
             console.print(f"• {msg}")
 
         with Status("[bold]Working…[/] scanning & processing", console=console, spinner="dots"):
-            stats = run_ota_extract(root, overwrite=overwrite, raw=want_raw, progress=cb)
+            stats = run_ota_extract(root, overwrite=overwrite, raw=want_raw, progress=cb, cleanup=cleanup)
 
         _section(console, "OTA Extractor — Done")
         console.print(
@@ -357,8 +388,9 @@ def _cli():
     ap.add_argument("root", nargs="?", default=".", help="Root folder to process (default: current dir)")
     ap.add_argument("--overwrite", action="store_true", help="Overwrite existing .new.dat / .img")
     ap.add_argument("--raw", action="store_true", help="Also attempt simg2img → *_raw.img if available")
+    ap.add_argument("--cleanup", action="store_true", help="Delete .new.dat.br, .new.dat, .patch.dat after success")
     args = ap.parse_args()
-    stats = run_ota_extract(args.root, overwrite=args.overwrite, raw=args.raw, progress=print)
+    stats = run_ota_extract(args.root, overwrite=args.overwrite, raw=args.raw, progress=print, cleanup=args.cleanup)
     print(
         f"\n==> Done. "
         f"Decompressed={stats['decompressed']}  "
@@ -380,6 +412,7 @@ def _ui_ota_extract(console, **kwargs):
     root = Prompt.ask("Folder to scan for OTA files", default=default_root)
     overwrite = Confirm.ask("Overwrite existing .new.dat/.img?", default=False)
     raw = Confirm.ask("Also try simg2img to create *_raw.img (if available)?", default=False)
+    cleanup = Confirm.ask("Cleanup intermediate files? (keeps only .img)", default=False)
 
     def progress(msg: str):
         try:
@@ -387,11 +420,28 @@ def _ui_ota_extract(console, **kwargs):
         except Exception:
             pass
 
-    stats = run_ota_extract(root, overwrite=overwrite, raw=raw, progress=progress)
+    stats = run_ota_extract(root, overwrite=overwrite, raw=raw, progress=progress, cleanup=cleanup)
     console.print(
         f"[green]Done.[/] Decompressed={stats['decompressed']}  "
         f"Converted={stats['converted']}  RawOK={stats['raw_ok']}  Errors={stats['errors']}"
     )
+
+    # Check for ext2explore
+    ext2_exe = shutil.which("ext2explore.exe")
+    if not ext2_exe:
+        local_bin = Path("bin") / "ext2explore.exe"
+        if local_bin.exists(): ext2_exe = str(local_bin.resolve())
+        elif Path("ext2explore.exe").exists(): ext2_exe = str(Path("ext2explore.exe").resolve())
+
+    if ext2_exe and stats['raw_ok'] > 0:
+        if Confirm.ask("\n[bold cyan]ext2explore[/] detected. Launch it to browse the raw images?", default=True):
+            try:
+                # Launch detached
+                subprocess.Popen([ext2_exe])
+                console.print("[green]Launched ext2explore.[/] (Use File -> Open Image -> Select *_raw.img)")
+            except Exception as e:
+                console.print(f"[red]Failed to launch:[/red] {e}")
+
     Confirm.ask("Back", default=True)
 
 # Register in the add-ons menu
