@@ -44,7 +44,7 @@ def _extract_zip_file(console: Console, zip_path: Path, out_path: Path) -> bool:
         console.print(f"[green]Success![/] Extracted to: [bold]{out_path}[/]")
         return True
     except Exception as e:
-        console.print(f"[red]Extraction failed:[/r] {e}")
+        console.print(f"[red]Extraction failed:[/red] {e}")
         return False
 
 try:
@@ -152,7 +152,7 @@ try:
         # Also check if there's an inner 'update.zip' we should mention (if we skipped it)
         # inner_zip = out_dir / "update.zip"
         # if inner_zip.exists():
-        #     console.print("[yellow]Note:[/r] Found an inner [bold]update.zip[/]. You might need to unzip that one too.")
+        #     console.print("[yellow]Note:[/yellow] Found an inner [bold]update.zip[/]. You might need to unzip that one too.")
 
         if has_ota_files:
             if Confirm.ask("\nFound OTA files (dat.br/transfer.list). Run [bold]OTA Extractor[/] now?", default=True):
