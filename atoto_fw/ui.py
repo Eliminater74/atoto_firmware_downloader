@@ -301,9 +301,12 @@ def download_with_progress(url: str, out_path: Path, expected_hash: str = "") ->
             # try to learn the *full* size for progress bar
             try:
                 full = SESSION.head(url, timeout=8, allow_redirects=True)
-                total = int(full.headers.get("Content-Length", total))
+                total = int(full.headers.get("Content-Length", 0))
             except Exception:
                 pass
+        
+        # If total is 0, set to None for indeterminate progress bar
+        p_total = total if total > 0 else None
 
         mode = "ab" if resume > 0 else "wb"
         downloaded = resume
@@ -317,7 +320,7 @@ def download_with_progress(url: str, out_path: Path, expected_hash: str = "") ->
             console=console,
             transient=False
         ) as progress:
-            task_id = progress.add_task("dl", total=total, completed=downloaded)
+            task_id = progress.add_task("dl", total=p_total, completed=downloaded)
             with open(tmp, mode) as f:
                 for chunk in r.iter_content(chunk_size=128 * 1024):
                     if not chunk:
@@ -350,7 +353,10 @@ def download_with_progress(url: str, out_path: Path, expected_hash: str = "") ->
         if digest.lower() != expected_hash.lower():
             console.print(f"[red]Checksum mismatch![/] expected {expected_hash}, got {digest}")
         else:
-            console.print("[green]Checksum OK[/]")
+            console.print(f"[green]Checksum OK[/] ({algo})")
+    
+    console.print(f"\n[bold green]Download Complete![/] Saved to: {out_path.name}")
+    console.input("[dim]Press Enter to continue...[/]")
 
 # ────────────────────────── Search & Download flow ──────────────────────────
 def run_search_download_flow(profile: Dict[str, Any], out_base: Path, verbose: bool, deep_scan: bool = False) -> None:
