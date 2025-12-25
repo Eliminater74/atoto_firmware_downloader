@@ -254,7 +254,19 @@ def run_ota_extract(
 
         # Optional: sparse -> raw using simg2img if requested and available
         if raw:
+            # Check PATH, then local bin/, then CWD
             simg2img = shutil.which("simg2img.exe") or shutil.which("simg2img")
+            if not simg2img:
+                # Fallback: check ./bin/simg2img.exe
+                local_bin = Path("bin") / "simg2img.exe"
+                if local_bin.exists():
+                    simg2img = str(local_bin.resolve())
+                else:
+                    # Fallback: check ./simg2img.exe
+                    local_root = Path("simg2img.exe")
+                    if local_root.exists():
+                        simg2img = str(local_root.resolve())
+
             if simg2img:
                 raw_path = dirp / f"{base}_raw.img"
                 if (not overwrite) and raw_path.exists():
