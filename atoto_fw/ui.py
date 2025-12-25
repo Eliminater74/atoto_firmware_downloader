@@ -394,7 +394,7 @@ def run_search_download_flow(profile: Dict[str, Any], out_base: Path, verbose: b
             tbl.add_row(a, b)
         console.print(tbl)
 
-        if not rows:
+    if not rows:
         section(
             console,
             "No Packages Found (0 matches)",
