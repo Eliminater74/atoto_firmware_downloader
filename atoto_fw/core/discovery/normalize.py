@@ -35,6 +35,8 @@ COMMON_VARIANTS = [
     "S01","S10","S01W","S10W","S01R","S10R",
     "-S02F", "-S04", "-PRN", "-S02", "-S10W",
     "WE", "XE", "SE", "SD", # F7/S8 editions
+    "-A", "-EU", "-NA", "-AL", # Regions (Asia/Aus?, EU, North America, Latin America?)
+    "TYC", "VW", # Specific fitments (Toyota, VW)
     "-BETA", "-TEST", "_BETA", "_TEST",
     "-DEBUG", "_DEBUG",
 ]

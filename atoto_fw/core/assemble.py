@@ -22,6 +22,8 @@ def try_lookup(model: str, mcu: str, progress=None, deep_scan: bool = False) -> 
             cands.append("A6")
         if "F7" in model:
             cands.append("F7")
+            cands.append("U10")
+            cands.append("DS7P")
         if "P8" in model:
             cands.append("P8")
 
