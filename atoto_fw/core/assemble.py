@@ -48,6 +48,18 @@ def try_lookup(model: str, mcu: str, progress=None, deep_scan: bool = False) -> 
 
     if progress: progress("Adding mirrors…")
     leader = cands[0] if cands else model
+    
+    # Redstone FOTA (X10 Series / newer)
+    if "X10" in model.upper() or deep_scan:
+        from .discovery.redstone import fetch_redstone_update
+        if progress: progress("Checking Redstone FOTA...")
+        try:
+            rs_updates = fetch_redstone_update(model)
+            if rs_updates:
+                merged.extend(rs_updates)
+                hits.append("Redstone")
+        except: pass
+
     merged.extend(known_links_for_model(leader))
 
     merged = dedupe_rows(merged)
