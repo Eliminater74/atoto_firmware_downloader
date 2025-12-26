@@ -286,15 +286,17 @@ def render_and_pick(
     return choice
 
 # ────────────────────────── Download ──────────────────────────
-def download_with_progress(url: str, out_path: Path, expected_hash: str = "") -> None:
+def download_with_progress(url: str, out_path: Path, expected_hash: str = "", session=None) -> None:
     tmp = out_path.with_suffix(out_path.suffix + ".part")
     resume = tmp.stat().st_size if tmp.exists() else 0
     headers = {"Range": f"bytes={resume}-"} if resume > 0 else {}
 
     # late import to avoid circulars
     from .core import SESSION
+    
+    sess = session if session else SESSION
 
-    with SESSION.get(url, stream=True, headers=headers, timeout=30) as r:
+    with sess.get(url, stream=True, headers=headers, timeout=30) as r:
         r.raise_for_status()
         total = int(r.headers.get("Content-Length", "0"))
         if r.status_code == 206:
@@ -499,7 +501,13 @@ def manual_url_flow(download_dir: Path) -> None:
     out = download_dir / safe_filename(url_leaf_name(url))
     section(console, "Download Ready", f"Saving to: {out}\n\nPress Ctrl+C to cancel")
     try:
-        download_with_progress(url, out)
+        # Create session with robust headers (mimicking Android) to avoid CDN rejection
+        s = requests.Session()
+        s.headers.update({
+            "User-Agent": "Dalvik/2.1.0 (Linux; U; Android 10; X10G2A7E Build/QUokka)",
+            "Accept": "*/*"
+        })
+        download_with_progress(url, out, session=s)
         section(console, "Download Complete")
         console.print(f"[green]Done![/] File saved:\n[bold]{out}[/]")
     except KeyboardInterrupt:
