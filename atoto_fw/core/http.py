@@ -1,5 +1,9 @@
 import requests
 from requests.adapters import HTTPAdapter, Retry
+import urllib3
+
+# Disable SSL warnings
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 UA   = "ATOTO-Firmware-CLI/3.2"
 
@@ -14,6 +18,7 @@ def make_session() -> requests.Session:
     s = requests.Session()
     s.mount("http://", adapter); s.mount("https://", adapter)
     s.headers.update({"User-Agent": UA})
+    s.verify = False  # Disable SSL certificate verification
     return s
 
 SESSION = make_session()
