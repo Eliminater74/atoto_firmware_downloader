@@ -305,76 +305,79 @@ def render_and_pick(
 
 # ────────────────────────── Download ──────────────────────────
 def download_with_progress(url: str, out_path: Path, expected_hash: str = "", session=None) -> None:
+    import shutil, hashlib
+
+    # late import to avoid circulars
+    from .core import SESSION
+    sess = session if session else SESSION
+
     tmp = out_path.with_suffix(out_path.suffix + ".part")
     resume = tmp.stat().st_size if tmp.exists() else 0
     headers = {"Range": f"bytes={resume}-"} if resume > 0 else {}
 
-    # late import to avoid circulars
-    from .core import SESSION
-    
-    sess = session if session else SESSION
-
     with sess.get(url, stream=True, headers=headers, timeout=30) as r:
         r.raise_for_status()
+
+        # If we asked for a range but the server ignored it (200 instead of 206),
+        # discard the stale .part and start fresh to avoid file corruption.
+        if resume > 0 and r.status_code == 200:
+            console.print("[yellow]Server does not support resume — restarting download.[/]")
+            tmp.unlink(missing_ok=True)
+            resume = 0
+
         total = int(r.headers.get("Content-Length", "0"))
-        if r.status_code == 206:
-            # try to learn the *full* size for progress bar
+        if r.status_code == 206 and total:
             try:
                 full = SESSION.head(url, timeout=8, allow_redirects=True)
                 total = int(full.headers.get("Content-Length", 0))
             except Exception:
-                pass
-        
-        # If total is 0, set to None for indeterminate progress bar
-        p_total = total if total > 0 else None
+                total = resume + total
 
+        p_total = (resume + total) if total > 0 else None
         mode = "ab" if resume > 0 else "wb"
         downloaded = resume
+
         task_desc = f"[bold]Downloading[/] {out_path.name}"
-        with Progress(
-            TextColumn(task_desc, justify="left"),
-            BarColumn(),
-            TransferSpeedColumn(),
-            TextColumn("{task.completed:>10.0f}/{task.total:>10.0f} B"),
-            TimeRemainingColumn(),
-            console=console,
-            transient=False
-        ) as progress:
-            task_id = progress.add_task("dl", total=p_total, completed=downloaded)
-            with open(tmp, mode) as f:
-                for chunk in r.iter_content(chunk_size=128 * 1024):
-                    if not chunk:
-                        continue
-                    f.write(chunk)
-                    downloaded += len(chunk)
-                    progress.update(task_id, completed=downloaded)
-        tmp.rename(out_path)
+        try:
+            with Progress(
+                TextColumn(task_desc, justify="left"),
+                BarColumn(),
+                TransferSpeedColumn(),
+                TextColumn("{task.completed:>10.0f}/{task.total:>10.0f} B"),
+                TimeRemainingColumn(),
+                console=console,
+                transient=False,
+            ) as progress:
+                task_id = progress.add_task("dl", total=p_total, completed=downloaded)
+                with open(tmp, mode) as f:
+                    for chunk in r.iter_content(chunk_size=128 * 1024):
+                        if not chunk:
+                            continue
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        progress.update(task_id, completed=downloaded)
+        except KeyboardInterrupt:
+            console.print(
+                f"\n[yellow]Download paused.[/] Partial file kept — next run will resume.\n"
+                f"[dim]{tmp}[/]"
+            )
+            raise
+
+    tmp.rename(out_path)
 
     if expected_hash:
         console.print("Verifying checksum…")
         algo = "sha256" if len(expected_hash) == 64 else ("sha1" if len(expected_hash) == 40 else "md5")
-        if algo == "sha256":
-            digest = sha256_file(out_path)
-        elif algo == "sha1":
-            import hashlib
-            h = hashlib.sha1()
-            with out_path.open("rb") as f:
-                for chunk in iter(lambda: f.read(1024 * 1024), b""):
-                    h.update(chunk)
-            digest = h.hexdigest()
-        else:
-            import hashlib
-            h = hashlib.md5()
-            with out_path.open("rb") as f:
-                for chunk in iter(lambda: f.read(1024 * 1024), b""):
-                    h.update(chunk)
-            digest = h.hexdigest()
-
+        h = hashlib.new(algo)
+        with out_path.open("rb") as f:
+            for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                h.update(chunk)
+        digest = h.hexdigest()
         if digest.lower() != expected_hash.lower():
             console.print(f"[red]Checksum mismatch![/] expected {expected_hash}, got {digest}")
         else:
             console.print(f"[green]Checksum OK[/] ({algo})")
-    
+
     console.print(f"\n[bold green]Download Complete![/] Saved to: {out_path.name}")
     console.input("[dim]Press Enter to continue...[/]")
 
@@ -462,24 +465,58 @@ def run_search_download_flow(profile: Dict[str, Any], out_base: Path, verbose: b
         # If 'No', loop back to list
         console.print("[dim]Returning to list...[/]")
 
+    import shutil
+
     model_for_path = (hits[0] if hits else model)
     out_dir = out_base / safe_filename(model_for_path)
     out_dir.mkdir(parents=True, exist_ok=True)
     filename = safe_filename(f"{model_for_path}_{chosen.get('version','NAv')}_{url_leaf_name(chosen['url'])}")
     out_path = out_dir / filename
 
+    # ── #11 File-exists check ─────────────────────────────────────────────────
+    if out_path.exists():
+        existing_mb = out_path.stat().st_size / 1_048_576
+        console.print(
+            f"\n[yellow]File already exists:[/] {out_path.name} "
+            f"([bold]{existing_mb:.1f} MB[/])"
+        )
+        choice = Menu(console, [
+            ("Re-download (overwrite)",   "overwrite"),
+            ("Skip — keep existing file", "skip"),
+        ], title="File Exists").show()
+        if choice == "skip" or not choice:
+            console.print("[dim]Skipped — using existing file.[/]")
+            return
+        out_path.unlink()
+
+    # ── #9 Disk-space check ───────────────────────────────────────────────────
+    pkg_size = chosen.get("size") or 0
+    if pkg_size:
+        free = shutil.disk_usage(out_dir).free
+        if free < pkg_size:
+            console.print(
+                f"\n[red]Not enough disk space.[/] "
+                f"Need [bold]{human_size(pkg_size)}[/], "
+                f"only [bold]{human_size(free)}[/] free on that drive."
+            )
+            if not Confirm.ask("Try anyway?", default=False):
+                return
+
     section(
         console,
         "Download Ready",
-        f"Saving to: {out_path}\nReported size: {human_size(chosen.get('size'))}\n\nPress Ctrl+C to cancel"
+        f"Saving to: {out_path}\nReported size: {human_size(pkg_size or None)}\n\nPress Ctrl+C to pause"
     )
     try:
         download_with_progress(chosen["url"], out_path, expected_hash=chosen.get("hash", ""))
         section(console, "Download Complete")
         console.print(f"[green]Done![/] File saved:\n[bold]{out_path}[/]")
     except KeyboardInterrupt:
-        section(console, "Interrupted")
-        console.print("[yellow]Interrupted by user.[/]")
+        section(console, "Paused")
+        console.print(
+            "[yellow]Download paused.[/] The partial file has been kept.\n"
+            "Run the same search and select this firmware again to resume."
+        )
     except Exception as e:
         section(console, "Download Failed")
         console.print(f"[red]Download failed:[/] {e}")
