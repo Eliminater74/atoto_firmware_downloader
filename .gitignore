@@ -169,3 +169,4 @@ ATOTO_Firmware/
 .pytest_cache/
 dist/
 build/
+.claude/settings.local.json
