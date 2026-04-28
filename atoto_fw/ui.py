@@ -404,14 +404,19 @@ def run_search_download_flow(profile: Dict[str, Any], out_base: Path, verbose: b
         console.print(tbl)
 
     if not rows:
+        tips = [
+            "1. Try a simpler model name in [cyan]Ad-hoc Search[/] (e.g. just [bold]F7[/] or [bold]S8[/]).",
+            "2. If you have a download link from support, use [cyan]Manual URL Download[/].",
+        ]
+        if not deep_scan:
+            tips.insert(0, "0. [bold green]Enable Deep Search[/] — it tries many more model variants and platforms.")
+        if mcu:
+            tips.append(f"3. Remove the MCU version ([bold]{mcu}[/]) from your profile and try again.")
         section(
             console,
-            "No Packages Found (0 matches)",
-            f"[yellow]We looked everywhere for '{model}' but found no public files.[/]\n"
-            "This usually means ATOTO hasn't uploaded them to the update server.\n\n"
-            "[bold]Tips:[/]\n"
-            "1. Try a simpler model name in [cyan]Ad-hoc Search[/] (e.g. just 'F7' or 'S8').\n"
-            "2. If you have a download link from support, use [cyan]Manual URL Download[/]."
+            "No Packages Found",
+            f"[yellow]Nothing found for '[bold]{model}[/]' across API, JSON, and mirrors.[/]\n\n"
+            "[bold]Suggestions:[/]\n" + "\n".join(tips)
         )
         return
 
