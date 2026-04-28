@@ -21,9 +21,9 @@ def try_lookup(model: str, mcu: str, progress=None, deep_scan: bool = False) -> 
         if "A6" in model:
             cands.append("A6")
         if "F7" in model:
-            cands.append("F7")
-            cands.append("U10")
-            cands.append("DS7P")
+            for _c in ("F7G2A7", "F7-GDB6P", "F7-SOC5P", "F7", "U10", "DS7P"):
+                if _c not in cands:
+                    cands.append(_c)
         if "P8" in model:
             cands.append("P8")
 
@@ -48,7 +48,7 @@ def try_lookup(model: str, mcu: str, progress=None, deep_scan: bool = False) -> 
 
     if progress: progress("Adding mirrors…")
     leader = cands[0] if cands else model
-    
+
     # Redstone FOTA (X10 Series / newer)
     if "X10" in model.upper() or deep_scan:
         from .discovery.redstone import fetch_redstone_update
@@ -60,7 +60,12 @@ def try_lookup(model: str, mcu: str, progress=None, deep_scan: bool = False) -> 
                 hits.append("Redstone")
         except: pass
 
-    merged.extend(known_links_for_model(leader))
+    # Check mirrors against leader; also try the raw model in case the
+    # leader was remapped to a canonical form that doesn't match the regex.
+    mirror_hits = known_links_for_model(leader)
+    if not mirror_hits and leader.upper() != model.upper():
+        mirror_hits = known_links_for_model(model)
+    merged.extend(mirror_hits)
 
     merged = dedupe_rows(merged)
     for i, p in enumerate(merged, 1):

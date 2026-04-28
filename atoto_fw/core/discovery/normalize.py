@@ -22,12 +22,19 @@ Retail vs. Platform ID:
 # Retail → canonical family hints (extend as needed)
 RETAIL_TO_CANONICAL: Dict[str, List[str]] = {
     # S8 Gen2, 4GB+32GB bottom-keys “MS” family
-    "S8EG2A74MSB": ["S8G2A74MS", "S8G2A7PE", "S8G2A74MS-S01"],
-    "S8EG2A7PE":   ["S8G2A7PE", "S8G2A74MS"],
-    "ATL-S8-HU":   ["S8G2A74MS", "S8G2A7PE", "S8G2A74MS-S01"],
+    “S8EG2A74MSB”: [“S8G2A74MS”, “S8G2A7PE”, “S8G2A74MS-S01”],
+    “S8EG2A7PE”:   [“S8G2A7PE”, “S8G2A74MS”],
+    “ATL-S8-HU”:   [“S8G2A74MS”, “S8G2A7PE”, “S8G2A74MS-S01”],
 
     # “B” side-keys “PM” family example
-    "S8EG2B74PMB": ["S8G2B74PM-S01", "S8G2B74PM-S10", "S8G2B74PM"],
+    “S8EG2B74PMB”: [“S8G2B74PM-S01”, “S8G2B74PM-S10”, “S8G2B74PM”],
+
+    # F7 Gen2 — two known hardware platforms: GDB6P (2022) and SOC5P (2023)
+    # XE = “Extended Edition” (common F7 retail suffix)
+    “F7G2A7XE”:  [“F7G2A7XE”, “F7G2A7”, “F7-GDB6P”, “F7-SOC5P”, “F7”],
+    “F7G2A7WE”:  [“F7G2A7WE”, “F7G2A7”, “F7-GDB6P”, “F7-SOC5P”, “F7”],
+    “F7G2A7SE”:  [“F7G2A7SE”, “F7G2A7”, “F7-GDB6P”, “F7-SOC5P”, “F7”],
+    “F7G2A7”:    [“F7G2A7”,   “F7-GDB6P”, “F7-SOC5P”, “F7”],
 }
 
 COMMON_VARIANTS = [
