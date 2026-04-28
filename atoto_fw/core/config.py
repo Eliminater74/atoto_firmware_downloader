@@ -6,12 +6,14 @@ from pathlib import Path
 from typing import Any, Dict
 
 # ---- schema & defaults -------------------------------------------------------
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 DEFAULT_CFG: Dict[str, Any] = {
     "schema": SCHEMA_VERSION,
-    "profiles": {},        # { "<name>": {model, mcu, res, variants, prefer_universal} }
-    "last_profile": "",    # default profile name
-    "verbose": False,      # extra logging in UI
+    "profiles": {},          # { "<name>": {model, mcu, res, variants, prefer_universal} }
+    "last_profile": "",      # default profile name
+    "verbose": False,        # extra logging in UI
+    "auto_open_folder": False,  # open folder automatically after download
+    "history": [],           # list of download records (newest first, capped at 50)
 }
 
 # ---- locations ---------------------------------------------------------------
@@ -88,6 +90,13 @@ def load_cfg() -> Dict[str, Any]:
         except Exception:
             pass
         return DEFAULT_CFG.copy()
+
+def add_history_entry(cfg: Dict[str, Any], entry: Dict[str, Any]) -> None:
+    """Prepend a download record and cap history at 50 entries."""
+    history = cfg.setdefault("history", [])
+    history.insert(0, entry)
+    cfg["history"] = history[:50]
+    save_cfg(cfg)
 
 def save_cfg(cfg: Dict[str, Any]) -> None:
     p = config_path()

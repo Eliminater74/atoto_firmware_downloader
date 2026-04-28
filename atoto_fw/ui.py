@@ -37,6 +37,7 @@ from .core import (
     load_cfg,
     save_cfg,
     config_path,
+    add_history_entry,
 )
 from .core.utils import url_leaf_name  # leaf filename helper
 from .tui import Menu, header_art, clear_screen, safe_filename, msvcrt, section
@@ -48,6 +49,34 @@ except Exception:
     addons_available = lambda: []  # graceful fallback if addons package is absent
 
 console = Console()
+
+# ── Thread-safe background update check ──────────────────────────────────────
+import threading as _threading
+_update_result: list = []
+_update_lock   = _threading.Lock()
+_update_thread: "Optional[_threading.Thread]" = None
+
+def _start_update_check() -> None:
+    global _update_thread
+    if _update_thread is not None:
+        return
+    def _worker():
+        try:
+            from . import __version__ as _ver
+            from .core.utils import check_github_update
+            res = check_github_update(_ver)
+            if res:
+                with _update_lock:
+                    _update_result.append(res)
+        except Exception:
+            pass
+    _update_thread = _threading.Thread(target=_worker, daemon=True)
+    _update_thread.start()
+
+def _poll_update() -> "Optional[tuple]":
+    """Return (tag, url) if an update was found, else None. Non-blocking."""
+    with _update_lock:
+        return _update_result[0] if _update_result else None
 
 def _open_folder(path: Path) -> None:
     """Open a folder in the OS file manager (best-effort, never raises)."""
@@ -218,12 +247,19 @@ def render_and_pick(
     my_res: str,
     prefer_universal: bool,
     want_variants: List[str],
+    downloaded_urls: "Optional[set]" = None,
 ) -> Optional[Dict[str, Any]]:
     # annotate & merge
     tag_rows(rows, my_res)
     grouped = group_by_url(rows)
     if isinstance(grouped, dict):  # robustness if backend returns a dict someday
         grouped = list(grouped.values())
+
+    # Mark previously downloaded packages
+    if downloaded_urls:
+        for r in grouped:
+            if r.get("url") in downloaded_urls:
+                r["fit"] = "✓ DL"
 
     def row_ok(r: Dict[str, Any]) -> bool:
         if prefer_universal and not r.get("scope", "").startswith("Universal"):
@@ -332,64 +368,89 @@ def render_and_pick(
     return choice
 
 # ────────────────────────── Download ──────────────────────────
-def download_with_progress(url: str, out_path: Path, expected_hash: str = "", session=None) -> None:
-    import shutil, hashlib
+_RETRY_ON = (
+    "requests.exceptions.ChunkedEncodingError",
+    "requests.exceptions.ConnectionError",
+    "requests.exceptions.Timeout",
+)
+_MAX_DL_RETRIES = 3
 
-    # late import to avoid circulars
+def download_with_progress(url: str, out_path: Path, expected_hash: str = "", session=None) -> None:
+    import time, hashlib
+    import requests as _req
+
     from .core import SESSION
     sess = session if session else SESSION
 
     tmp = out_path.with_suffix(out_path.suffix + ".part")
-    resume = tmp.stat().st_size if tmp.exists() else 0
-    headers = {"Range": f"bytes={resume}-"} if resume > 0 else {}
 
-    with sess.get(url, stream=True, headers=headers, timeout=30) as r:
-        r.raise_for_status()
+    for attempt in range(_MAX_DL_RETRIES + 1):
+        # Re-read resume point each attempt so partial progress is kept
+        resume = tmp.stat().st_size if tmp.exists() else 0
+        headers = {"Range": f"bytes={resume}-"} if resume > 0 else {}
 
-        # If we asked for a range but the server ignored it (200 instead of 206),
-        # discard the stale .part and start fresh to avoid file corruption.
-        if resume > 0 and r.status_code == 200:
-            console.print("[yellow]Server does not support resume — restarting download.[/]")
-            tmp.unlink(missing_ok=True)
-            resume = 0
-
-        total = int(r.headers.get("Content-Length", "0"))
-        if r.status_code == 206 and total:
-            try:
-                full = SESSION.head(url, timeout=8, allow_redirects=True)
-                total = int(full.headers.get("Content-Length", 0))
-            except Exception:
-                total = resume + total
-
-        p_total = (resume + total) if total > 0 else None
-        mode = "ab" if resume > 0 else "wb"
-        downloaded = resume
-
-        task_desc = f"[bold]Downloading[/] {out_path.name}"
         try:
-            with Progress(
-                TextColumn(task_desc, justify="left"),
-                BarColumn(),
-                TransferSpeedColumn(),
-                TextColumn("{task.completed:>10.0f}/{task.total:>10.0f} B"),
-                TimeRemainingColumn(),
-                console=console,
-                transient=False,
-            ) as progress:
-                task_id = progress.add_task("dl", total=p_total, completed=downloaded)
-                with open(tmp, mode) as f:
-                    for chunk in r.iter_content(chunk_size=128 * 1024):
-                        if not chunk:
-                            continue
-                        f.write(chunk)
-                        downloaded += len(chunk)
-                        progress.update(task_id, completed=downloaded)
+            with sess.get(url, stream=True, headers=headers, timeout=30) as r:
+                r.raise_for_status()
+
+                # Server ignored Range header — discard stale .part to avoid corruption
+                if resume > 0 and r.status_code == 200:
+                    console.print("[yellow]Server does not support resume — restarting.[/]")
+                    tmp.unlink(missing_ok=True)
+                    resume = 0
+
+                total = int(r.headers.get("Content-Length", "0"))
+                if r.status_code == 206 and total:
+                    try:
+                        full = SESSION.head(url, timeout=8, allow_redirects=True)
+                        total = int(full.headers.get("Content-Length", 0))
+                    except Exception:
+                        total = resume + total
+
+                p_total = (resume + total) if total > 0 else None
+                mode = "ab" if resume > 0 else "wb"
+                downloaded = resume
+
+                task_desc = f"[bold]Downloading[/] {out_path.name}"
+                try:
+                    with Progress(
+                        TextColumn(task_desc, justify="left"),
+                        BarColumn(),
+                        TransferSpeedColumn(),
+                        TextColumn("{task.completed:>10.0f}/{task.total:>10.0f} B"),
+                        TimeRemainingColumn(),
+                        console=console,
+                        transient=False,
+                    ) as progress:
+                        task_id = progress.add_task("dl", total=p_total, completed=downloaded)
+                        with open(tmp, mode) as f:
+                            for chunk in r.iter_content(chunk_size=128 * 1024):
+                                if not chunk:
+                                    continue
+                                f.write(chunk)
+                                downloaded += len(chunk)
+                                progress.update(task_id, completed=downloaded)
+                except KeyboardInterrupt:
+                    console.print(
+                        f"\n[yellow]Download paused.[/] Partial file kept — next run will resume.\n"
+                        f"[dim]{tmp}[/]"
+                    )
+                    raise
+            break  # success — exit retry loop
+
         except KeyboardInterrupt:
-            console.print(
-                f"\n[yellow]Download paused.[/] Partial file kept — next run will resume.\n"
-                f"[dim]{tmp}[/]"
-            )
             raise
+        except (_req.exceptions.ChunkedEncodingError,
+                _req.exceptions.ConnectionError,
+                _req.exceptions.Timeout) as exc:
+            if attempt >= _MAX_DL_RETRIES:
+                raise
+            wait = 2 ** attempt
+            console.print(
+                f"[yellow]Network error ({exc.__class__.__name__}) — "
+                f"retrying in {wait}s ({attempt + 1}/{_MAX_DL_RETRIES})…[/]"
+            )
+            time.sleep(wait)
 
     tmp.rename(out_path)
 
@@ -468,8 +529,10 @@ def run_search_download_flow(profile: Dict[str, Any], out_base: Path, verbose: b
         )
         return
 
+    _dl_urls = {e["url"] for e in load_cfg().get("history", [])}
     while True:
-        chosen = render_and_pick(rows, my_res, prefer_universal, variants_pref)
+        chosen = render_and_pick(rows, my_res, prefer_universal, variants_pref,
+                                 downloaded_urls=_dl_urls)
         if not chosen:
             section(console, "Canceled")
             return
@@ -539,8 +602,26 @@ def run_search_download_flow(profile: Dict[str, Any], out_base: Path, verbose: b
         download_with_progress(chosen["url"], out_path, expected_hash=chosen.get("hash", ""))
         section(console, "Download Complete")
         console.print(f"[green]Done![/] File saved:\n[bold]{out_path}[/]")
-        if Confirm.ask("Open download folder?", default=True):
+
+        # Record to history
+        from datetime import datetime
+        _cfg = load_cfg()
+        add_history_entry(_cfg, {
+            "model":         model,
+            "title":         chosen.get("title", ""),
+            "version":       chosen.get("version", ""),
+            "date":          chosen.get("date", ""),
+            "url":           chosen.get("url", ""),
+            "file":          str(out_path),
+            "downloaded_at": datetime.now().isoformat(timespec="seconds"),
+        })
+
+        # Open folder — auto if preference set, otherwise ask
+        if _cfg.get("auto_open_folder"):
             _open_folder(out_dir)
+        elif Confirm.ask("Open download folder?", default=True):
+            _open_folder(out_dir)
+
     except KeyboardInterrupt:
         section(console, "Paused")
         console.print(
@@ -620,35 +701,81 @@ def manual_url_flow(download_dir: Path) -> None:
         section(console, "Download Failed")
         console.print(f"[red]Download failed:[/] {e}")
 
+# ────────────────────────── Settings menu ──────────────────────────
+def _settings_menu(cfg: Dict[str, Any], out_dir: Path) -> None:
+    from . import __version__
+    while True:
+        verbose_lbl    = "[green]ON[/]"  if cfg.get("verbose")          else "[dim]off[/]"
+        auto_open_lbl  = "[green]ON[/]"  if cfg.get("auto_open_folder") else "[dim]off[/]"
+        hist_count     = len(cfg.get("history", []))
+        upd = _poll_update()
+        ver_line = (
+            f"v{__version__} — [green]up to date[/]" if upd is None
+            else f"v{__version__} — [yellow]v{upd[0]} available[/]"
+        )
+
+        items = [
+            (f"Verbose logging          {verbose_lbl}",         "VERBOSE"),
+            (f"Auto-open folder         {auto_open_lbl}",       "AUTO_OPEN"),
+            (f"Download history         {hist_count} entries",  "HISTORY"),
+            ("Open output folder",                               "OPEN_OUT"),
+            ("Open config folder",                              "OPEN_CFG"),
+            (f"Version                  {ver_line}",            None),
+            ("[dim]Back[/]",                                    "BACK"),
+        ]
+        choice = Menu(
+            console, items,
+            title="Settings / Info",
+            subtitle=f"Config: {config_path()}"
+        ).show()
+
+        if not choice or choice == "BACK":
+            break
+        elif choice == "VERBOSE":
+            cfg["verbose"] = not cfg.get("verbose", False)
+            save_cfg(cfg)
+        elif choice == "AUTO_OPEN":
+            cfg["auto_open_folder"] = not cfg.get("auto_open_folder", False)
+            save_cfg(cfg)
+            state = "enabled" if cfg["auto_open_folder"] else "disabled"
+            console.print(f"[dim]Auto-open folder {state}.[/]")
+        elif choice == "HISTORY":
+            if hist_count == 0:
+                console.print("[dim]No downloads recorded yet.[/]")
+                console.input("[dim]Press Enter to continue…[/]")
+                continue
+            # Show last 10 entries
+            section(console, "Download History", f"Showing last {min(hist_count, 10)} of {hist_count}")
+            for e in cfg.get("history", [])[:10]:
+                console.print(
+                    f"  [cyan]{e.get('downloaded_at','?')}[/]  "
+                    f"[bold]{e.get('model','?')}[/]  "
+                    f"{e.get('version','?')}  "
+                    f"[dim]{e.get('file','?')}[/]"
+                )
+            console.print()
+            if Confirm.ask(f"Clear all {hist_count} history entries?", default=False):
+                cfg["history"] = []
+                save_cfg(cfg)
+                console.print("[dim]History cleared.[/]")
+            else:
+                console.input("[dim]Press Enter to continue…[/]")
+        elif choice == "OPEN_OUT":
+            _open_folder(out_dir)
+        elif choice == "OPEN_CFG":
+            _open_folder(config_path().parent)
+
 # ────────────────────────── Main menu ──────────────────────────
 def main_menu(out_dir: Path) -> None:
-    # ─── Update Check (Background) ───
-    try:
-        from . import __version__ as app_ver
-        from .core.utils import check_github_update
-        import threading
-        # We'll attach this dict to the function or use a mutable local
-        # A simple mutable list works to pass data from thread
-        update_info = [] 
-        def _check():
-            res = check_github_update(app_ver)
-            if res:
-                update_info.append(res) # (tag, url)
-
-        # Only check once per run
-        if not hasattr(main_menu, "_checked"):
-            t = threading.Thread(target=_check, daemon=True)
-            t.start()
-            main_menu._checked = True
-    except ImportError:
-        update_info = []
-
+    _start_update_check()   # fire-and-forget; result readable via _poll_update()
     cfg = load_cfg()
     while True:
-        # Show update banner if found
-        if update_info:
-            ver, url = update_info[0]
-            console.print(Panel(f"🚀 [bold green]New Version Available: v{ver}[/]\n[link={url}]Click here to download[/]", border_style="green", expand=False), justify="center")
+        upd = _poll_update()
+        if upd:
+            ver, url = upd
+            console.print(Panel(
+                f"[bold green]New Version Available: v{ver}[/]\n[link={url}]Click here to download[/]",
+                border_style="green", expand=False), justify="center")
 
         default_name = cfg.get("last_profile") or "(none)"
         
@@ -709,11 +836,7 @@ def main_menu(out_dir: Path) -> None:
             manual_url_flow(out_dir / "manual")
 
         elif ans == "SETTINGS":
-            section(console, "Settings / Info", f"Config: {config_path()}\nOutput: {out_dir}")
-            console.print(f"Verbose logs: {'ON' if cfg.get('verbose', False) else 'OFF'}")
-            if Confirm.ask("Toggle verbose?", default=False):
-                cfg["verbose"] = not cfg.get("verbose", False)
-                save_cfg(cfg)
+            _settings_menu(cfg, out_dir)
             
         elif ans == "ADDONS":
             addons_menu()

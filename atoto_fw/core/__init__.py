@@ -4,7 +4,7 @@ from .discovery.normalize import normalize_candidates
 from .grouping import tag_rows, group_by_url, sort_rows
 from .utils import human_size, sha256_file, url_leaf_name
 from .http import SESSION
-from .config import load_cfg, save_cfg, config_path
+from .config import load_cfg, save_cfg, config_path, add_history_entry
 
 # Optional: downloader (UI can switch to this later)
 try:
@@ -16,7 +16,7 @@ __all__ = [
     "try_lookup", "normalize_candidates", "tag_rows", "group_by_url", "sort_rows",
     "human_size", "sha256_file", "url_leaf_name",
     "SESSION",
-    "load_cfg", "save_cfg", "config_path",
+    "load_cfg", "save_cfg", "config_path", "add_history_entry",
     "download_with_resume",
     "setup_logging",
 ]
