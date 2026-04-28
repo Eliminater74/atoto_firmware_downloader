@@ -17,15 +17,17 @@ def try_lookup(model: str, mcu: str, progress=None, deep_scan: bool = False) -> 
             cands.append("6315")
             cands.append("S8 Gen2")
         if "X10" in model:
-            cands.append("X10")
+            for _c in ("X10G2A7", "X10G2", "X10"):
+                if _c not in cands: cands.append(_c)
         if "A6" in model:
-            cands.append("A6")
+            for _c in ("A6G2A7PE", "A6G2A74MS", "A6G2A7", "A6"):
+                if _c not in cands: cands.append(_c)
         if "F7" in model:
-            for _c in ("F7G2A7", "F7-GDB6P", "F7-SOC5P", "F7", "U10", "DS7P"):
-                if _c not in cands:
-                    cands.append(_c)
+            for _c in ("F7G2A7", "F7G2B7", "F7-GDB6P", "F7-SOC5P", "F7", "U10", "DS7P"):
+                if _c not in cands: cands.append(_c)
         if "P8" in model:
-            cands.append("P8")
+            for _c in ("P8G2A7PE", "P8G2A74MS", "P8G2A7", "P8"):
+                if _c not in cands: cands.append(_c)
 
     # ── API probe (all candidates) ────────────────────────────────────────────
     total = len(cands) or 1

@@ -30,11 +30,33 @@ RETAIL_TO_CANONICAL: Dict[str, List[str]] = {
     "S8EG2B74PMB": ["S8G2B74PM-S01", "S8G2B74PM-S10", "S8G2B74PM"],
 
     # F7 Gen2 — two known hardware platforms: GDB6P (2022) and SOC5P (2023)
-    # XE = "Extended Edition" (common F7 retail suffix)
+    # XE/WE/SE = edition suffixes common on F7 retail SKUs
     "F7G2A7XE":  ["F7G2A7XE", "F7G2A7", "F7-GDB6P", "F7-SOC5P", "F7"],
     "F7G2A7WE":  ["F7G2A7WE", "F7G2A7", "F7-GDB6P", "F7-SOC5P", "F7"],
     "F7G2A7SE":  ["F7G2A7SE", "F7G2A7", "F7-GDB6P", "F7-SOC5P", "F7"],
     "F7G2A7":    ["F7G2A7",   "F7-GDB6P", "F7-SOC5P", "F7"],
+    "F7G2B7PE":  ["F7G2B7PE", "F7G2B7", "F7"],
+    "F7G2B7WE":  ["F7G2B7WE", "F7G2B7", "F7"],
+
+    # A6 Gen2 — shares UIS7862/6315 chip with S8 in some SKUs; try both PE and MS
+    "A6EG2A74MSB": ["A6G2A74MS", "A6G2A7PE", "A6G2A74MS-S01", "A6G2A7"],
+    "A6EG2A7PE":   ["A6G2A7PE",  "A6G2A74MS", "A6G2A7"],
+    "A6G2A74MS":   ["A6G2A74MS", "A6G2A7PE",  "A6G2A7"],
+    "A6G2A7PE":    ["A6G2A7PE",  "A6G2A74MS", "A6G2A7"],
+    "A6G2B74PE":   ["A6G2B74PE", "A6G2B7PE",  "A6G2B7"],
+
+    # P8 Gen2 — premium/flagship; MS and PE variants mirror S8 naming
+    "P8EG2A74MSB": ["P8G2A74MS", "P8G2A7PE", "P8G2A74MS-S01", "P8G2A7"],
+    "P8EG2A7PE":   ["P8G2A7PE",  "P8G2A74MS", "P8G2A7"],
+    "P8G2A74MS":   ["P8G2A74MS", "P8G2A7PE",  "P8G2A7"],
+    "P8G2A7PE":    ["P8G2A7PE",  "P8G2A74MS", "P8G2A7"],
+
+    # X10 Gen2 — Qualcomm QCM6125; uses Redstone FOTA
+    "X10G2A7E":    ["X10G2A7E",  "X10G2A7",   "X10G2",  "X10"],
+    "X10G2A7PE":   ["X10G2A7PE", "X10G2A7",   "X10G2",  "X10"],
+    "X10G2A7MS":   ["X10G2A7MS", "X10G2A7",   "X10G2",  "X10"],
+    "X10EG2A7MSB": ["X10G2A7MS", "X10G2A7",   "X10G2",  "X10"],
+    "X10G2A7":     ["X10G2A7",   "X10G2",     "X10"],
 }
 
 COMMON_VARIANTS = [

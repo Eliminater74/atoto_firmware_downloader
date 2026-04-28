@@ -5,7 +5,7 @@ UI layer for ATOTO Firmware Downloader
 
 - Profiles (persisted): model / MCU / resolution / variant prefs / prefer-universal
 - Rich menu + results table
-- Live status while probing API/JSON/mirrors (no more “stuck at starting”)
+- Live status while probing API/JSON/mirrors (no more "stuck at starting")
 - Resume download with progress + optional checksum verify
 - Advanced / Add-ons menu (e.g., OTA extractor)
 """
@@ -57,7 +57,21 @@ def prompt_profile(existing: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     prof["name"]  = Prompt.ask("Profile name", default=prof.get("name", "My S8"))
     prof["model"] = Prompt.ask("Model / Device name", default=prof.get("model", "S8EG2A74MSB")).upper().strip()
     prof["mcu"]   = Prompt.ask("MCU version (Optional - helps find newer firmware)", default=prof.get("mcu", "")).strip()
-    prof["res"]   = Prompt.ask("Display resolution", default=prof.get("res", "1280x720")).strip()
+    _res_items = [
+        ("1280x720  (S8 / A6 QLED / F7 PE / X10)", "1280x720"),
+        ("1024x600  (Standard 7- / 9- / 10-inch)",  "1024x600"),
+        ("800x480   (Older / budget units)",         "800x480"),
+        ("Custom / Other",                           "CUSTOM"),
+    ]
+    _cur_res = prof.get("res", "1280x720")
+    _res_menu = Menu(console, _res_items,
+                     title="Display Resolution",
+                     subtitle=f"Current: {_cur_res} — arrow keys to select")
+    _res_pick = _res_menu.show()
+    if _res_pick == "CUSTOM" or not _res_pick:
+        prof["res"] = Prompt.ask("Enter resolution (e.g. 800x480)", default=_cur_res).strip()
+    else:
+        prof["res"] = _res_pick
 
     vdefault = prof.get("variants", "ANY")
     v = Prompt.ask("Variant prefs (MS,PE,PM or ANY)", default=vdefault).upper().replace(" ", "")
@@ -96,14 +110,17 @@ def prompt_adhoc_params() -> Optional[Dict[str, Any]]:
     else:
         res = choice
 
-    # 3. Variants (Keep simple or Menu? Let's stick to simple defaults for 'Quick')
-    # Most users just want ANY.
-    
+    # 3. MCU (optional — press Enter to skip)
+    mcu = Prompt.ask(
+        "MCU version [dim](optional — press Enter to skip)[/]",
+        default=""
+    ).strip()
+
     return {
         "name": "Ad-hoc",
         "model": model,
         "res": res,
-        "mcu": "",
+        "mcu": mcu,
         "variants": "ANY",
         "prefer_universal": True
     }
