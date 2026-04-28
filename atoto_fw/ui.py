@@ -49,12 +49,30 @@ except Exception:
 
 console = Console()
 
+def _open_folder(path: Path) -> None:
+    """Open a folder in the OS file manager (best-effort, never raises)."""
+    import subprocess, sys
+    try:
+        if sys.platform == "win32":
+            import os; os.startfile(str(path))
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", str(path)])
+        else:
+            subprocess.Popen(["xdg-open", str(path)])
+    except Exception:
+        pass
+
 # ────────────────────────── Profile UI ──────────────────────────
 def prompt_profile(existing: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     clear_screen(console)
     console.print(Panel.fit("Create / Edit Profile", border_style="cyan"))
     prof = dict(existing or {})
-    prof["name"]  = Prompt.ask("Profile name", default=prof.get("name", "My S8"))
+    while True:
+        name = Prompt.ask("Profile name", default=prof.get("name", "My S8")).strip()
+        if name:
+            prof["name"] = name
+            break
+        console.print("[red]Profile name cannot be empty.[/]")
     prof["model"] = Prompt.ask("Model / Device name", default=prof.get("model", "S8EG2A74MSB")).upper().strip()
     prof["mcu"]   = Prompt.ask("MCU version (Optional - helps find newer firmware)", default=prof.get("mcu", "")).strip()
     _res_items = [
@@ -116,13 +134,20 @@ def prompt_adhoc_params() -> Optional[Dict[str, Any]]:
         default=""
     ).strip()
 
+    # 4. Deep Search toggle
+    deep = Confirm.ask(
+        "Enable Deep Search? [dim](slower — tries many more model variants)[/]",
+        default=False
+    )
+
     return {
         "name": "Ad-hoc",
         "model": model,
         "res": res,
         "mcu": mcu,
         "variants": "ANY",
-        "prefer_universal": True
+        "prefer_universal": True,
+        "_deep": deep,
     }
 
 def profile_menu(cfg: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -261,15 +286,18 @@ def render_and_pick(
                 spec = {"overflow": "fold"}
             table.add_column(hdr, **spec)
 
+        _src_color = {"API": "green", "JSON": "cyan", "MIRROR": "yellow", "Redstone": "magenta"}
+
         # Rendering for specific index
         for i, r in enumerate(filt):
             r_view = r.copy()
             r_view["id"] = str(i+1)
             r_view["size"] = human_size(r.get("size"))
-            
+            src = r.get("source", "?")
+            color = _src_color.get(src, "dim")
+            r_view["source"] = f"[{color}]{src}[/]"
+
             style = "reverse bold cyan" if i == idx and msvcrt else ""
-            
-            # Add row with style
             table.add_row(*[str(r_view.get(k, "")) for k, _ in cols], style=style)
 
         console.print(table)
@@ -511,6 +539,8 @@ def run_search_download_flow(profile: Dict[str, Any], out_base: Path, verbose: b
         download_with_progress(chosen["url"], out_path, expected_hash=chosen.get("hash", ""))
         section(console, "Download Complete")
         console.print(f"[green]Done![/] File saved:\n[bold]{out_path}[/]")
+        if Confirm.ask("Open download folder?", default=True):
+            _open_folder(out_dir)
     except KeyboardInterrupt:
         section(console, "Paused")
         console.print(
@@ -559,9 +589,17 @@ def manual_url_flow(download_dir: Path) -> None:
         return
     download_dir.mkdir(parents=True, exist_ok=True)
     out = download_dir / safe_filename(url_leaf_name(url))
-    section(console, "Download Ready", f"Saving to: {out}\n\nPress Ctrl+C to cancel")
+
+    if out.exists():
+        console.print(f"\n[yellow]File already exists:[/] {out.name} ({out.stat().st_size / 1_048_576:.1f} MB)")
+        skip = not Confirm.ask("Re-download (overwrite)?", default=False)
+        if skip:
+            console.print("[dim]Skipped.[/]")
+            return
+        out.unlink()
+
+    section(console, "Download Ready", f"Saving to: {out}\n\nPress Ctrl+C to pause")
     try:
-        # Create session with robust headers (mimicking Android) to avoid CDN rejection
         s = requests.Session()
         s.headers.update({
             "User-Agent": "Dalvik/2.1.0 (Linux; U; Android 10; X10G2A7E Build/QUokka)",
@@ -570,9 +608,14 @@ def manual_url_flow(download_dir: Path) -> None:
         download_with_progress(url, out, session=s)
         section(console, "Download Complete")
         console.print(f"[green]Done![/] File saved:\n[bold]{out}[/]")
+        if Confirm.ask("Open download folder?", default=True):
+            _open_folder(download_dir)
     except KeyboardInterrupt:
-        section(console, "Interrupted")
-        console.print("[yellow]Interrupted by user.[/]")
+        section(console, "Paused")
+        console.print(
+            "[yellow]Download paused.[/] Partial file kept — run again to resume.\n"
+            f"[dim]{out.with_suffix(out.suffix + '.part')}[/]"
+        )
     except Exception as e:
         section(console, "Download Failed")
         console.print(f"[red]Download failed:[/] {e}")
@@ -659,7 +702,8 @@ def main_menu(out_dir: Path) -> None:
         elif ans == "ADHOC":
             p = prompt_adhoc_params()
             if p:
-                run_search_download_flow(p, out_dir, cfg.get("verbose", False))
+                run_search_download_flow(p, out_dir, cfg.get("verbose", False),
+                                         deep_scan=p.pop("_deep", False))
 
         elif ans == "MANUAL":
             manual_url_flow(out_dir / "manual")
