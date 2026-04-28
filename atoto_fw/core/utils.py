@@ -66,6 +66,12 @@ def sha256_file(path: Path) -> str:
             h.update(chunk)
     return h.hexdigest()
 
+def _ver_tuple(v: str):
+    try:
+        return tuple(int(x) for x in v.split("."))
+    except Exception:
+        return (0,)
+
 def check_github_update(current_ver: str) -> Optional[Tuple[str, str]]:
     """
     Checks GitHub for a newer release.
@@ -78,14 +84,8 @@ def check_github_update(current_ver: str) -> Optional[Tuple[str, str]]:
             data = r.json()
             tag = data.get("tag_name", "").strip().lstrip("v")
             cur = current_ver.strip().lstrip("v")
-            
-            # Simple lexicographical check (or semver if needed)
-            if tag and tag != cur:
-                # Basic check: is remote '2.0.1' > local '2.0.0'?
-                # For robust comparison, we'd need 'packaging.version', but let's do a simple string compare
-                # if main digits differ. Ideally assume tags increase.
-                if tag > cur: 
-                    return (tag, data.get("html_url", ""))
+            if tag and _ver_tuple(tag) > _ver_tuple(cur):
+                return (tag, data.get("html_url", ""))
     except Exception:
         pass
     return None

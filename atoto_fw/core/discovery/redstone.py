@@ -82,8 +82,7 @@ def fetch_redstone_update(
                 "desc": f"Source: Redstone FOTA\nMD5: {fw.get('icv','')}\nPlatform: {platform}"
             }]
             
-    except Exception as e:
-        # print(f"Redstone probe failed: {e}")
+    except Exception:
         pass
 
     return []

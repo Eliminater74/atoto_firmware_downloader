@@ -17,7 +17,6 @@ def make_session() -> requests.Session:
     s = requests.Session()
     s.mount("http://", adapter); s.mount("https://", adapter)
     s.headers.update({"User-Agent": UA})
-    s.verify = False
     return s
 
 SESSION = make_session()

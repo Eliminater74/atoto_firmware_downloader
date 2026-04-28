@@ -15,26 +15,26 @@ Retail vs. Platform ID:
 - normalize_candidates(raw): expands a retail code or device name into a set of
   likely canonical model strings ATOTO’s endpoints accept (e.g., S8G2A74MS-S01).
 - build_suggestions(raw): same set, but ranked to present to users.
-- series_from_model(q): returns the device “series” token (e.g., S8G2) in a few
+- series_from_model(q): returns the device "series" token (e.g., S8G2) in a few
   casings, used by JSON endpoint probing.
 """
 
 # Retail → canonical family hints (extend as needed)
 RETAIL_TO_CANONICAL: Dict[str, List[str]] = {
-    # S8 Gen2, 4GB+32GB bottom-keys “MS” family
-    “S8EG2A74MSB”: [“S8G2A74MS”, “S8G2A7PE”, “S8G2A74MS-S01”],
-    “S8EG2A7PE”:   [“S8G2A7PE”, “S8G2A74MS”],
-    “ATL-S8-HU”:   [“S8G2A74MS”, “S8G2A7PE”, “S8G2A74MS-S01”],
+    # S8 Gen2, 4GB+32GB bottom-keys "MS" family
+    "S8EG2A74MSB": ["S8G2A74MS", "S8G2A7PE", "S8G2A74MS-S01"],
+    "S8EG2A7PE":   ["S8G2A7PE", "S8G2A74MS"],
+    "ATL-S8-HU":   ["S8G2A74MS", "S8G2A7PE", "S8G2A74MS-S01"],
 
-    # “B” side-keys “PM” family example
-    “S8EG2B74PMB”: [“S8G2B74PM-S01”, “S8G2B74PM-S10”, “S8G2B74PM”],
+    # "B" side-keys "PM" family example
+    "S8EG2B74PMB": ["S8G2B74PM-S01", "S8G2B74PM-S10", "S8G2B74PM"],
 
     # F7 Gen2 — two known hardware platforms: GDB6P (2022) and SOC5P (2023)
-    # XE = “Extended Edition” (common F7 retail suffix)
-    “F7G2A7XE”:  [“F7G2A7XE”, “F7G2A7”, “F7-GDB6P”, “F7-SOC5P”, “F7”],
-    “F7G2A7WE”:  [“F7G2A7WE”, “F7G2A7”, “F7-GDB6P”, “F7-SOC5P”, “F7”],
-    “F7G2A7SE”:  [“F7G2A7SE”, “F7G2A7”, “F7-GDB6P”, “F7-SOC5P”, “F7”],
-    “F7G2A7”:    [“F7G2A7”,   “F7-GDB6P”, “F7-SOC5P”, “F7”],
+    # XE = "Extended Edition" (common F7 retail suffix)
+    "F7G2A7XE":  ["F7G2A7XE", "F7G2A7", "F7-GDB6P", "F7-SOC5P", "F7"],
+    "F7G2A7WE":  ["F7G2A7WE", "F7G2A7", "F7-GDB6P", "F7-SOC5P", "F7"],
+    "F7G2A7SE":  ["F7G2A7SE", "F7G2A7", "F7-GDB6P", "F7-SOC5P", "F7"],
+    "F7G2A7":    ["F7G2A7",   "F7-GDB6P", "F7-SOC5P", "F7"],
 }
 
 COMMON_VARIANTS = [
@@ -66,7 +66,7 @@ def series_from_model(q: str) -> List[str]:
 def normalize_candidates(raw: str) -> List[str]:
     """
     Expand one input string into many candidates ATOTO’s API/JSON endpoints
-    might accept. Order is “best guess first”.
+    might accept. Order is "best guess first".
     """
     r = (raw or "").strip().upper()
     r = re.sub(r"\s+", "", r)
@@ -74,7 +74,7 @@ def normalize_candidates(raw: str) -> List[str]:
     mapped = RETAIL_TO_CANONICAL.get(r, [])
     out: List[str] = list(mapped)
 
-    # If user typed the on-device “ATL-S8-HU” name, point to MS family
+    # If user typed the on-device "ATL-S8-HU" name, point to MS family
     if r.startswith("ATL-S8"):
         base_guess = "S8G2A74MS"
         for suf in ("-S01","-S10",""):

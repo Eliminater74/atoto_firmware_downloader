@@ -12,6 +12,7 @@ UI layer for ATOTO Firmware Downloader
 
 from __future__ import annotations
 import re
+import requests
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -628,8 +629,6 @@ def parse_args():
 
 def main():
     args = parse_args()
-    out_dir = Path(args.out)
-    out_dir.mkdir(parents=True, exist_ok=True)
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
     

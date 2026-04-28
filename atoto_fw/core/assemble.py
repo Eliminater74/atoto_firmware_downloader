@@ -58,7 +58,7 @@ def try_lookup(model: str, mcu: str, progress=None, deep_scan: bool = False) -> 
             if rs_updates:
                 merged.extend(rs_updates)
                 hits.append("Redstone")
-        except: pass
+        except Exception: pass
 
     # Check mirrors against leader; also try the raw model in case the
     # leader was remapped to a canonical form that doesn't match the regex.
