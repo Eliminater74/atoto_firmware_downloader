@@ -3,6 +3,7 @@
 ![Visitor Count](https://hits.sh/github.com/Eliminater74/atoto_firmware_downloader.svg?style=flat-square&label=Page+Views&color=blue)
 [![GitHub Stars](https://img.shields.io/github/stars/Eliminater74/atoto_firmware_downloader?style=flat-square&logo=github)](https://github.com/Eliminater74/atoto_firmware_downloader/stargazers)
 [![Latest Release](https://img.shields.io/github/v/release/Eliminater74/atoto_firmware_downloader?style=flat-square&logo=github&color=green)](https://github.com/Eliminater74/atoto_firmware_downloader/releases/latest)
+[![Total Downloads](https://img.shields.io/github/downloads/Eliminater74/atoto_firmware_downloader/total?style=flat-square&logo=github&label=Downloads&color=brightgreen)](https://github.com/Eliminater74/atoto_firmware_downloader/releases)
 [![Last Commit](https://img.shields.io/github/last-commit/Eliminater74/atoto_firmware_downloader?style=flat-square)](https://github.com/Eliminater74/atoto_firmware_downloader/commits/main)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/github/license/Eliminater74/atoto_firmware_downloader?style=flat-square)](LICENSE)
