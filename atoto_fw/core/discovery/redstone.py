@@ -38,12 +38,14 @@ _PROBE_VERSIONS: List[tuple] = [
     ("20250815.210712", False),
     ("20250925.150720", True),    # full firmware
     ("20251021.191955", False),
-    # 20251106.174502 is the current latest — use earlier swv values to fetch it
+    ("20251106.174502", False),
+    # 20260403.140715 confirmed April 2026 2.22 GB — use earlier swv values to fetch it
 ]
 
 # Which toversion strings are known-full (not incremental)
 _KNOWN_FULL: Dict[str, bool] = {
     "20250925.150720": True,
+    "20260403.140715": True,    # 2.22 GB confirmed full firmware (April 2026)
 }
 
 _HEADERS = {
@@ -86,7 +88,8 @@ def fetch_redstone_update(
     if current_version and not any(v == current_version for v, _ in probes):
         probes.insert(0, (current_version, False))
 
-    seen_urls: set = set()
+    seen_urls: set = set()    # deduplicate by URL
+    seen_vers: set = set()    # deduplicate by (version, size) — CDN may return different URLs for same file
     results: List[Dict] = []
 
     # Release-channel probes
@@ -119,11 +122,17 @@ def fetch_redstone_update(
                 url = fw.get("objecturi", "")
                 if not url or url in seen_urls:
                     continue
-                seen_urls.add(url)
-
                 ver = fw.get("toversion", "")
-                name = fw.get("objectName") or f"redstone_{ver}.zip"
                 size = int(fw.get("objectsize") or 0)
+                # CDN sometimes returns different node URLs for the same file;
+                # deduplicate by (version, size) as a secondary key
+                ver_key = (ver, size)
+                if ver_key in seen_vers:
+                    continue
+                seen_urls.add(url)
+                seen_vers.add(ver_key)
+
+                name = fw.get("objectName") or f"redstone_{ver}.zip"
                 icv  = fw.get("icv", "")
 
                 raw_date = (fw.get("dateline") or "")[:8]

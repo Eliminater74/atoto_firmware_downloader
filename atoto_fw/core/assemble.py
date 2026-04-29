@@ -72,24 +72,17 @@ def try_lookup(model: str, mcu: str, progress=None, deep_scan: bool = False, inc
     if progress: progress("Adding mirrors…")
     leader = cands[0] if cands else model
 
-    # ── Redstone FOTA (X10 / X10D series and deep scan) ──────────────────────
-    _mu = model.upper()
-    if "X10" in _mu or deep_scan:
-        from .discovery.redstone import fetch_redstone_update, platform_for_model as _pfm
-        # In deep scan mode probe all known Redstone platforms, not just the typed model
-        _rs_models = [model]
-        if deep_scan and not _pfm(model):
-            _rs_models = ["X10G2A7E"]  # representative model to trigger qcm6125_T10 probe
+    # ── Redstone FOTA — only for models that map to a known platform ─────────
+    from .discovery.redstone import fetch_redstone_update, platform_for_model as _pfm
+    if _pfm(model):   # returns None for S8/A6/F7/P8 — skips silently
         if progress: progress("Checking Redstone FOTA...")
-        for _rs_m in _rs_models:
-            try:
-                rs_updates = fetch_redstone_update(_rs_m, include_beta=include_beta)
-                if rs_updates:
-                    merged.extend(rs_updates)
-                    if "Redstone" not in hits:
-                        hits.append("Redstone")
-            except Exception:
-                pass
+        try:
+            rs_updates = fetch_redstone_update(model, include_beta=include_beta)
+            if rs_updates:
+                merged.extend(rs_updates)
+                hits.append("Redstone")
+        except Exception:
+            pass
 
     # ── Mirror links ──────────────────────────────────────────────────────────
     # Check mirrors against leader; also try the raw model in case the
