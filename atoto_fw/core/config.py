@@ -11,9 +11,10 @@ DEFAULT_CFG: Dict[str, Any] = {
     "schema": SCHEMA_VERSION,
     "profiles": {},          # { "<name>": {model, mcu, res, variants, prefer_universal} }
     "last_profile": "",      # default profile name
-    "verbose": False,        # extra logging in UI
-    "auto_open_folder": False,  # open folder automatically after download
-    "history": [],           # list of download records (newest first, capped at 50)
+    "verbose": False,              # extra logging in UI
+    "auto_open_folder": False,     # open folder automatically after download
+    "include_beta": False,         # include beta/pre-release firmware in search results
+    "history": [],                 # list of download records (newest first, capped at 50)
 }
 
 # ---- locations ---------------------------------------------------------------

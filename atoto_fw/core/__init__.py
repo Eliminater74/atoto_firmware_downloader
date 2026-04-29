@@ -2,7 +2,7 @@
 from .assemble import try_lookup
 from .discovery.normalize import normalize_candidates
 from .grouping import tag_rows, group_by_url, sort_rows
-from .utils import human_size, sha256_file, url_leaf_name
+from .utils import human_size, sha256_file, url_leaf_name, normalize_oss_url, oss_alternates
 from .http import SESSION
 from .config import load_cfg, save_cfg, config_path, add_history_entry
 
@@ -14,7 +14,7 @@ except Exception:  # not fatal if file not present yet
 
 __all__ = [
     "try_lookup", "normalize_candidates", "tag_rows", "group_by_url", "sort_rows",
-    "human_size", "sha256_file", "url_leaf_name",
+    "human_size", "sha256_file", "url_leaf_name", "normalize_oss_url", "oss_alternates",
     "SESSION",
     "load_cfg", "save_cfg", "config_path", "add_history_entry",
     "download_with_resume",

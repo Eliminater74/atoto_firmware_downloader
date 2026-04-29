@@ -1,8 +1,28 @@
 from __future__ import annotations
 import hashlib, json, math, urllib.parse
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from .http import SESSION
+
+# Both hostnames resolve to the same Aliyun OSS bucket.
+# file.myatoto.com is a CDN alias ATOTO uses in customer-facing links.
+_ATOTO_OSS = "https://atoto-usa.oss-us-west-1.aliyuncs.com"
+_MYATOTO_CDN = "https://file.myatoto.com"
+
+def normalize_oss_url(url: str) -> str:
+    """Normalize file.myatoto.com URLs to the canonical OSS hostname."""
+    if url.startswith(_MYATOTO_CDN):
+        return _ATOTO_OSS + url[len(_MYATOTO_CDN):]
+    return url
+
+def oss_alternates(url: str) -> List[str]:
+    """Return [primary, cdn_alias] for an ATOTO OSS URL, or [url] for anything else."""
+    url = url.strip()
+    if url.startswith(_ATOTO_OSS):
+        return [url, _MYATOTO_CDN + url[len(_ATOTO_OSS):]]
+    if url.startswith(_MYATOTO_CDN):
+        return [url, _ATOTO_OSS + url[len(_MYATOTO_CDN):]]
+    return [url]
 
 def human_size(n: Optional[int]) -> str:
     if not n or n <= 0: return "?"

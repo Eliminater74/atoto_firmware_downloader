@@ -242,20 +242,38 @@ def profile_menu(cfg: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             return cfg["profiles"][key]
 
 # ────────────────────────── Results table & selection ──────────────────────────
+def _parse_selection(raw: str, max_n: int) -> List[int]:
+    """Parse '1', '1,3', '1-3', '1,3-5' into sorted 0-based indices."""
+    indices: set = set()
+    for part in raw.split(","):
+        part = part.strip()
+        if "-" in part:
+            lo_s, _, hi_s = part.partition("-")
+            try:
+                lo, hi = int(lo_s.strip()), int(hi_s.strip())
+                indices.update(range(max(1, lo), min(max_n, hi) + 1))
+            except ValueError:
+                pass
+        elif part.isdigit():
+            v = int(part)
+            if 1 <= v <= max_n:
+                indices.add(v)
+    return sorted(i - 1 for i in indices)
+
+
 def render_and_pick(
     rows: List[Dict[str, Any]],
     my_res: str,
     prefer_universal: bool,
     want_variants: List[str],
     downloaded_urls: "Optional[set]" = None,
-) -> Optional[Dict[str, Any]]:
-    # annotate & merge
+) -> List[Dict[str, Any]]:
+    """Return a list of selected packages (empty = canceled)."""
     tag_rows(rows, my_res)
     grouped = group_by_url(rows)
-    if isinstance(grouped, dict):  # robustness if backend returns a dict someday
+    if isinstance(grouped, dict):
         grouped = list(grouped.values())
 
-    # Mark previously downloaded packages
     if downloaded_urls:
         for r in grouped:
             if r.get("url") in downloaded_urls:
@@ -264,7 +282,7 @@ def render_and_pick(
     def row_ok(r: Dict[str, Any]) -> bool:
         if prefer_universal and not r.get("scope", "").startswith("Universal"):
             return False
-        if want_variants and r.get("variants") not in ("-", ""):
+        if want_variants and r.get("variants") not in ("-", "", None):
             row_vars = set(r["variants"].split(","))
             if not (row_vars & set(want_variants)):
                 return False
@@ -272,100 +290,140 @@ def render_and_pick(
 
     filt = [r for r in grouped if row_ok(r)] or grouped
 
-    # Interactive Table Selection
     idx = 0
+    selected: set = set()  # 0-based indices toggled via Space (msvcrt only)
+
+    _src_color = {"API": "green", "JSON": "cyan", "MIRROR": "yellow", "Redstone": "magenta"}
+    cols = [
+        ("id", "#"), ("source", "Src"), ("title", "Title"), ("version", "Ver"),
+        ("date", "Date"), ("size", "Size"), ("res", "Res"), ("scope", "Scope"),
+        ("variants", "Variants"), ("fit", "Fit"), ("url", "URL")
+    ]
+    col_specs = {
+        "Title":    {"max_width": 40, "overflow": "ellipsis", "no_wrap": True},
+        "URL":      {"max_width": 30, "overflow": "ellipsis", "no_wrap": True},
+        "Ver":      {"max_width": 20, "overflow": "ellipsis", "no_wrap": True},
+        "Date":     {"no_wrap": True, "min_width": 10},
+        "Size":     {"no_wrap": True, "min_width": 8},
+        "Res":      {"no_wrap": True},
+        "Src":      {"no_wrap": True},
+        "Scope":    {"max_width": 15, "overflow": "ellipsis", "no_wrap": True},
+        "Variants": {"max_width": 10, "overflow": "fold"},
+    }
+
     while True:
         section(
             console,
             "Firmware Results",
             "Universal = not tied to a specific resolution. "
-            "Res-specific = package names that explicitly mention 1024×600 or 1280×720."
+            "Res-specific = package names that explicitly mention 1024x600 or 1280x720."
         )
+        hint_nav = "Use arrows + Space to multi-select, Enter to confirm" if msvcrt else "Enter numbers to select (e.g. 1  or  1,3  or  1-3)"
         console.print(Panel.fit(
-            "[bold]Tip[/]: Prefer Universal packages for the same device family; "
+            f"[bold]Tip[/]: Prefer Universal packages for the same device family; "
             "use Res-specific only when a package explicitly targets your screen.\n"
             f"[dim]Profile Fit: {my_res or '?'} · Variant prefs: "
             f"{', '.join(want_variants) if want_variants else 'ANY'} · "
-            f"Scope: {'Universal preferred' if prefer_universal else 'All'}[/]",
+            f"Scope: {'Universal preferred' if prefer_universal else 'All'} · {hint_nav}[/]",
             border_style="cyan"
         ))
 
         table = Table(
-            title="Available Packages (Use ↑/↓ and Enter)",
+            title="Available Packages",
             show_lines=False,
             header_style="bold magenta",
             box=box.SIMPLE_HEAVY
         )
-        cols = [
-            ("id", "#"), ("source", "Src"), ("title", "Title"), ("version", "Ver"),
-            ("date", "Date"), ("size", "Size"), ("res", "Res"), ("scope", "Scope"),
-            ("variants", "Variants"), ("fit", "Fit"), ("url", "URL")
-        ]
-        
-        # Specific styling to ensure all columns fit
-        col_specs = {
-            "Title": {"max_width": 40, "overflow": "ellipsis", "no_wrap": True},
-            "URL":   {"max_width": 30, "overflow": "ellipsis", "no_wrap": True},
-            "Ver":   {"max_width": 20, "overflow": "ellipsis", "no_wrap": True},
-            "Date":  {"no_wrap": True, "min_width": 10},
-            "Size":  {"no_wrap": True, "min_width": 8},
-            "Res":   {"no_wrap": True},
-            "Src":   {"no_wrap": True},
-            "Scope": {"max_width": 15, "overflow": "ellipsis", "no_wrap": True},
-            "Variants": {"max_width": 10, "overflow": "fold"},
-        }
-
         for _, hdr in cols:
-            spec = col_specs.get(hdr, {})
-            # Default fallback
-            if not spec:
-                spec = {"overflow": "fold"}
+            spec = col_specs.get(hdr, {"overflow": "fold"})
             table.add_column(hdr, **spec)
 
-        _src_color = {"API": "green", "JSON": "cyan", "MIRROR": "yellow", "Redstone": "magenta"}
-
-        # Rendering for specific index
         for i, r in enumerate(filt):
             r_view = r.copy()
-            r_view["id"] = str(i+1)
+            r_view["id"] = "[x]" if i in selected else str(i + 1)
             r_view["size"] = human_size(r.get("size"))
             src = r.get("source", "?")
-            color = _src_color.get(src, "dim")
-            r_view["source"] = f"[{color}]{src}[/]"
+            r_view["source"] = f"[{_src_color.get(src, 'dim')}]{src}[/]"
 
-            style = "reverse bold cyan" if i == idx and msvcrt else ""
+            is_cursor = bool(msvcrt) and (i == idx)
+            is_sel    = i in selected
+            if is_cursor and is_sel:
+                style = "reverse bold green"
+            elif is_cursor:
+                style = "reverse bold cyan"
+            elif is_sel:
+                style = "bold green"
+            else:
+                style = ""
             table.add_row(*[str(r_view.get(k, "")) for k, _ in cols], style=style)
 
         console.print(table)
-        console.print(f"[dim]Selected: #{idx+1} (Total {len(filt)}) · Esc/0 to Cancel[/]")
 
         if not msvcrt:
-             # Fallback
-            raw = Prompt.ask("Select # (0 to cancel)", default="1").strip()
-            if raw == "0" or not raw.isdigit(): return None
-            v = int(raw)
-            if 1 <= v <= len(filt): return filt[v-1]
-            return None
+            console.print(f"[dim]Total {len(filt)} packages[/]")
+            raw = Prompt.ask(
+                "Select #s (e.g. 1  or  1,3  or  1-3; 0 to cancel)",
+                default="1"
+            ).strip()
+            if raw == "0" or not raw:
+                return []
+            indices = _parse_selection(raw, len(filt))
+            if not indices:
+                return []
+            chosen_items = [filt[i] for i in indices]
+            result = []
+            for item in chosen_items:
+                if item.get("fit") == "⚠":
+                    console.print(
+                        f"[yellow]Heads-up:[/] {item.get('title', '')} looks like "
+                        f"[bold]{item.get('res', '?')}[/], profile is [bold]{my_res}[/]."
+                    )
+                    if not Confirm.ask("Include anyway?", default=False):
+                        continue
+                result.append(item)
+            return result
+
+        sel_info = f" · {len(selected)} marked" if selected else ""
+        console.print(
+            f"[dim]Cursor: #{idx+1}/{len(filt)}{sel_info} · "
+            "arrows=navigate · Space=mark · a=all · Enter=confirm · Esc=cancel[/]"
+        )
 
         key = msvcrt.getch()
         if key in (b'\000', b'\xe0'):
             key = msvcrt.getch()
-            if key == b'H': idx = max(0, idx - 1)
-            elif key == b'P': idx = min(len(filt) - 1, idx + 1)
+            if key == b'H':
+                idx = max(0, idx - 1)
+            elif key == b'P':
+                idx = min(len(filt) - 1, idx + 1)
+        elif key == b' ':
+            if idx in selected:
+                selected.discard(idx)
+            else:
+                selected.add(idx)
+        elif key in (b'a', b'A'):
+            if len(selected) == len(filt):
+                selected.clear()
+            else:
+                selected.update(range(len(filt)))
         elif key == b'\r':
             break
-        elif key in (b'\x1b', b'0'): 
-            return None
+        elif key in (b'\x1b', b'0'):
+            return []
 
-    choice = filt[idx]
-    if choice.get("fit") == "⚠":
-        console.print(
-            f"[yellow]Heads-up:[/] package looks like [bold]{choice.get('res','?')}[/], "
-            f"profile is [bold]{my_res}[/]."
-        )
-        if not Confirm.ask("Continue anyway?", default=False):
-            return None
-    return choice
+    # msvcrt: build result from marked rows (or cursor row if nothing marked)
+    chosen_items = [filt[i] for i in sorted(selected)] if selected else [filt[idx]]
+    result = []
+    for item in chosen_items:
+        if item.get("fit") == "⚠":
+            console.print(
+                f"[yellow]Heads-up:[/] {item.get('title', '')} looks like "
+                f"[bold]{item.get('res', '?')}[/], profile is [bold]{my_res}[/]."
+            )
+            if not Confirm.ask("Include anyway?", default=False):
+                continue
+        result.append(item)
+    return result
 
 # ────────────────────────── Download ──────────────────────────
 _RETRY_ON = (
@@ -471,7 +529,7 @@ def download_with_progress(url: str, out_path: Path, expected_hash: str = "", se
     console.input("[dim]Press Enter to continue...[/]")
 
 # ────────────────────────── Search & Download flow ──────────────────────────
-def run_search_download_flow(profile: Dict[str, Any], out_base: Path, verbose: bool, deep_scan: bool = False) -> None:
+def run_search_download_flow(profile: Dict[str, Any], out_base: Path, verbose: bool, deep_scan: bool = False, include_beta: bool = False) -> None:
     model = profile.get("model", "").strip() or Prompt.ask("Model / Device", default="S8EG2A74MSB").strip()
     mcu   = profile.get("mcu", "").strip()
     my_res = profile.get("res", "1280x720").strip()
@@ -492,7 +550,7 @@ def run_search_download_flow(profile: Dict[str, Any], out_base: Path, verbose: b
             if verbose:
                 console.log(msg)
 
-        rows, hits = try_lookup(model, mcu, progress=progress_cb, deep_scan=deep_scan)
+        rows, hits = try_lookup(model, mcu, progress=progress_cb, deep_scan=deep_scan, include_beta=include_beta)
 
     # optional verbose normalization view
     if verbose:
@@ -529,108 +587,142 @@ def run_search_download_flow(profile: Dict[str, Any], out_base: Path, verbose: b
         )
         return
 
+    import shutil
+    from datetime import datetime
+
     _dl_urls = {e["url"] for e in load_cfg().get("history", [])}
+    model_for_path = (hits[0] if hits else model)
+
     while True:
-        chosen = render_and_pick(rows, my_res, prefer_universal, variants_pref,
-                                 downloaded_urls=_dl_urls)
-        if not chosen:
+        chosen_list = render_and_pick(rows, my_res, prefer_universal, variants_pref,
+                                      downloaded_urls=_dl_urls)
+        if not chosen_list:
             section(console, "Canceled")
             return
 
-        # Show full details before confirming
-        console.print(Panel(
-            f"[bold cyan]Title:[/] {chosen.get('title')}\n"
-            f"[bold cyan]Version:[/] {chosen.get('version')}\n"
-            f"[bold cyan]Date:[/] {chosen.get('date')}\n"
-            f"[bold cyan]Size:[/] {human_size(chosen.get('size'))}\n"
-            f"[bold cyan]Resolution:[/] {chosen.get('res')}\n"
-            f"[bold cyan]Scope:[/] {chosen.get('scope')}\n"
-            f"[bold cyan]URL:[/] [link={chosen.get('url')}]{chosen.get('url')}[/]",
-            title="📦 Selected Package Details",
-            border_style="green",
-            expand=False
-        ))
+        if len(chosen_list) == 1:
+            chosen_single = chosen_list[0]
+            console.print(Panel(
+                f"[bold cyan]Title:[/] {chosen_single.get('title')}\n"
+                f"[bold cyan]Version:[/] {chosen_single.get('version')}\n"
+                f"[bold cyan]Date:[/] {chosen_single.get('date')}\n"
+                f"[bold cyan]Size:[/] {human_size(chosen_single.get('size'))}\n"
+                f"[bold cyan]Resolution:[/] {chosen_single.get('res')}\n"
+                f"[bold cyan]Scope:[/] {chosen_single.get('scope')}\n"
+                f"[bold cyan]URL:[/] [link={chosen_single.get('url')}]{chosen_single.get('url')}[/]",
+                title="Selected Package Details",
+                border_style="green",
+                expand=False
+            ))
+            if Confirm.ask("Download this firmware?", default=True):
+                items_to_download = chosen_list
+                break
+            console.print("[dim]Returning to list...[/]")
+        else:
+            batch_tbl = Table(
+                title=f"Batch Download — {len(chosen_list)} packages",
+                box=box.SIMPLE_HEAVY,
+                header_style="bold magenta"
+            )
+            batch_tbl.add_column("#", style="dim", no_wrap=True)
+            batch_tbl.add_column("Title", max_width=40, overflow="ellipsis")
+            batch_tbl.add_column("Version", max_width=20, overflow="ellipsis")
+            batch_tbl.add_column("Size", no_wrap=True)
+            for bi, bitem in enumerate(chosen_list, 1):
+                batch_tbl.add_row(
+                    str(bi),
+                    bitem.get("title", ""),
+                    bitem.get("version", ""),
+                    human_size(bitem.get("size")),
+                )
+            console.print(batch_tbl)
+            if Confirm.ask(f"Download all {len(chosen_list)} packages?", default=True):
+                items_to_download = chosen_list
+                break
+            console.print("[dim]Returning to list...[/]")
 
-        if Confirm.ask("Download this firmware?", default=True):
-            break
-        # If 'No', loop back to list
-        console.print("[dim]Returning to list...[/]")
-
-    import shutil
-
-    model_for_path = (hits[0] if hits else model)
     out_dir = out_base / safe_filename(model_for_path)
     out_dir.mkdir(parents=True, exist_ok=True)
-    filename = safe_filename(f"{model_for_path}_{chosen.get('version','NAv')}_{url_leaf_name(chosen['url'])}")
-    out_path = out_dir / filename
 
-    # ── #11 File-exists check ─────────────────────────────────────────────────
-    if out_path.exists():
-        existing_mb = out_path.stat().st_size / 1_048_576
-        console.print(
-            f"\n[yellow]File already exists:[/] {out_path.name} "
-            f"([bold]{existing_mb:.1f} MB[/])"
+    for dl_idx, chosen in enumerate(items_to_download, 1):
+        if len(items_to_download) > 1:
+            section(console, f"Item {dl_idx}/{len(items_to_download)}", chosen.get("title", ""))
+
+        filename = safe_filename(
+            f"{model_for_path}_{chosen.get('version', 'NAv')}_{url_leaf_name(chosen['url'])}"
         )
-        choice = Menu(console, [
-            ("Re-download (overwrite)",   "overwrite"),
-            ("Skip — keep existing file", "skip"),
-        ], title="File Exists").show()
-        if choice == "skip" or not choice:
-            console.print("[dim]Skipped — using existing file.[/]")
-            return
-        out_path.unlink()
+        out_path = out_dir / filename
 
-    # ── #9 Disk-space check ───────────────────────────────────────────────────
-    pkg_size = chosen.get("size") or 0
-    if pkg_size:
-        free = shutil.disk_usage(out_dir).free
-        if free < pkg_size:
+        # ── File-exists check ─────────────────────────────────────────────────
+        if out_path.exists():
+            existing_mb = out_path.stat().st_size / 1_048_576
             console.print(
-                f"\n[red]Not enough disk space.[/] "
-                f"Need [bold]{human_size(pkg_size)}[/], "
-                f"only [bold]{human_size(free)}[/] free on that drive."
+                f"\n[yellow]File already exists:[/] {out_path.name} "
+                f"([bold]{existing_mb:.1f} MB[/])"
             )
-            if not Confirm.ask("Try anyway?", default=False):
-                return
+            fc = Menu(console, [
+                ("Re-download (overwrite)",   "overwrite"),
+                ("Skip — keep existing file", "skip"),
+            ], title="File Exists").show()
+            if fc == "skip" or not fc:
+                console.print("[dim]Skipped — using existing file.[/]")
+                continue
+            out_path.unlink()
 
-    section(
-        console,
-        "Download Ready",
-        f"Saving to: {out_path}\nReported size: {human_size(pkg_size or None)}\n\nPress Ctrl+C to pause"
-    )
-    try:
-        download_with_progress(chosen["url"], out_path, expected_hash=chosen.get("hash", ""))
-        section(console, "Download Complete")
-        console.print(f"[green]Done![/] File saved:\n[bold]{out_path}[/]")
+        # ── Disk-space check ──────────────────────────────────────────────────
+        pkg_size = chosen.get("size") or 0
+        if pkg_size:
+            free = shutil.disk_usage(out_dir).free
+            if free < pkg_size:
+                console.print(
+                    f"\n[red]Not enough disk space.[/] "
+                    f"Need [bold]{human_size(pkg_size)}[/], "
+                    f"only [bold]{human_size(free)}[/] free on that drive."
+                )
+                if not Confirm.ask("Try anyway?", default=False):
+                    continue
 
-        # Record to history
-        from datetime import datetime
-        _cfg = load_cfg()
-        add_history_entry(_cfg, {
-            "model":         model,
-            "title":         chosen.get("title", ""),
-            "version":       chosen.get("version", ""),
-            "date":          chosen.get("date", ""),
-            "url":           chosen.get("url", ""),
-            "file":          str(out_path),
-            "downloaded_at": datetime.now().isoformat(timespec="seconds"),
-        })
-
-        # Open folder — auto if preference set, otherwise ask
-        if _cfg.get("auto_open_folder"):
-            _open_folder(out_dir)
-        elif Confirm.ask("Open download folder?", default=True):
-            _open_folder(out_dir)
-
-    except KeyboardInterrupt:
-        section(console, "Paused")
-        console.print(
-            "[yellow]Download paused.[/] The partial file has been kept.\n"
-            "Run the same search and select this firmware again to resume."
+        section(
+            console,
+            "Download Ready",
+            f"Saving to: {out_path}\nReported size: {human_size(pkg_size or None)}\n\nPress Ctrl+C to pause"
         )
-    except Exception as e:
-        section(console, "Download Failed")
-        console.print(f"[red]Download failed:[/] {e}")
+        try:
+            download_with_progress(chosen["url"], out_path, expected_hash=chosen.get("hash", ""))
+            section(console, "Download Complete" if len(items_to_download) == 1 else f"Done {dl_idx}/{len(items_to_download)}")
+            console.print(f"[green]Saved:[/] {out_path}")
+
+            _cfg = load_cfg()
+            add_history_entry(_cfg, {
+                "model":         model,
+                "title":         chosen.get("title", ""),
+                "version":       chosen.get("version", ""),
+                "date":          chosen.get("date", ""),
+                "url":           chosen.get("url", ""),
+                "file":          str(out_path),
+                "downloaded_at": datetime.now().isoformat(timespec="seconds"),
+            })
+            _dl_urls.add(chosen["url"])
+
+            if dl_idx == len(items_to_download):
+                if _cfg.get("auto_open_folder"):
+                    _open_folder(out_dir)
+                elif Confirm.ask("Open download folder?", default=True):
+                    _open_folder(out_dir)
+
+        except KeyboardInterrupt:
+            section(console, "Paused")
+            console.print(
+                "[yellow]Download paused.[/] The partial file has been kept.\n"
+                "Run the same search and select this firmware again to resume."
+            )
+            break
+        except Exception as e:
+            section(console, "Download Failed")
+            console.print(f"[red]Download failed:[/] {e}")
+            if len(items_to_download) > 1:
+                if not Confirm.ask("Continue with remaining packages?", default=True):
+                    break
 
 # ────────────────────────── Advanced / Add-ons menu ──────────────────────────
 def addons_menu() -> None:
@@ -707,6 +799,7 @@ def _settings_menu(cfg: Dict[str, Any], out_dir: Path) -> None:
     while True:
         verbose_lbl    = "[green]ON[/]"  if cfg.get("verbose")          else "[dim]off[/]"
         auto_open_lbl  = "[green]ON[/]"  if cfg.get("auto_open_folder") else "[dim]off[/]"
+        beta_lbl       = "[yellow]ON[/]" if cfg.get("include_beta")     else "[dim]off[/]"
         hist_count     = len(cfg.get("history", []))
         upd = _poll_update()
         ver_line = (
@@ -717,11 +810,12 @@ def _settings_menu(cfg: Dict[str, Any], out_dir: Path) -> None:
         items = [
             (f"Verbose logging          {verbose_lbl}",         "VERBOSE"),
             (f"Auto-open folder         {auto_open_lbl}",       "AUTO_OPEN"),
+            (f"Include beta firmware    {beta_lbl}",            "BETA"),
             (f"Download history         {hist_count} entries",  "HISTORY"),
             ("Open output folder",                               "OPEN_OUT"),
-            ("Open config folder",                              "OPEN_CFG"),
+            ("Open config folder",                               "OPEN_CFG"),
             (f"Version                  {ver_line}",            None),
-            ("[dim]Back[/]",                                    "BACK"),
+            ("[dim]Back[/]",                                     "BACK"),
         ]
         choice = Menu(
             console, items,
@@ -739,6 +833,14 @@ def _settings_menu(cfg: Dict[str, Any], out_dir: Path) -> None:
             save_cfg(cfg)
             state = "enabled" if cfg["auto_open_folder"] else "disabled"
             console.print(f"[dim]Auto-open folder {state}.[/]")
+        elif choice == "BETA":
+            cfg["include_beta"] = not cfg.get("include_beta", False)
+            save_cfg(cfg)
+            state = "enabled" if cfg["include_beta"] else "disabled"
+            console.print(
+                f"[dim]Beta firmware search {state}. "
+                "Beta builds may be unstable — use at your own risk.[/]"
+            )
         elif choice == "HISTORY":
             if hist_count == 0:
                 console.print("[dim]No downloads recorded yet.[/]")
@@ -796,6 +898,9 @@ def main_menu(out_dir: Path) -> None:
         
         ans = menu.show()
 
+        _beta = cfg.get("include_beta", False)
+        _verb = cfg.get("verbose", False)
+
         if ans == "EXIT" or ans is None:
             clear_screen(console)
             return
@@ -803,17 +908,17 @@ def main_menu(out_dir: Path) -> None:
         elif ans == "QUICK":
             name = cfg.get("last_profile", "")
             if name and name in cfg["profiles"]:
-                run_search_download_flow(cfg["profiles"][name], out_dir, cfg.get("verbose", False))
+                run_search_download_flow(cfg["profiles"][name], out_dir, _verb, include_beta=_beta)
             else:
                 console.print("[yellow]No default profile set. Opening Profiles…[/]")
                 p = profile_menu(cfg)
                 if p:
-                    run_search_download_flow(p, out_dir, cfg.get("verbose", False))
+                    run_search_download_flow(p, out_dir, _verb, include_beta=_beta)
 
         elif ans == "PROFILES":
             p = profile_menu(cfg)
             if p and Confirm.ask("Run Quick Search with this profile now?", default=True):
-                run_search_download_flow(p, out_dir, cfg.get("verbose", False))
+                run_search_download_flow(p, out_dir, _verb, include_beta=_beta)
 
         elif ans == "DEEP":
             name = cfg.get("last_profile", "")
@@ -822,15 +927,14 @@ def main_menu(out_dir: Path) -> None:
                 p = cfg["profiles"][name]
             else:
                 p = profile_menu(cfg)
-            
             if p:
-                run_search_download_flow(p, out_dir, cfg.get("verbose", False), deep_scan=True)
+                run_search_download_flow(p, out_dir, _verb, deep_scan=True, include_beta=_beta)
 
         elif ans == "ADHOC":
             p = prompt_adhoc_params()
             if p:
-                run_search_download_flow(p, out_dir, cfg.get("verbose", False),
-                                         deep_scan=p.pop("_deep", False))
+                run_search_download_flow(p, out_dir, _verb,
+                                         deep_scan=p.pop("_deep", False), include_beta=_beta)
 
         elif ans == "MANUAL":
             manual_url_flow(out_dir / "manual")

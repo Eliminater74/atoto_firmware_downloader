@@ -29,21 +29,61 @@ RETAIL_TO_CANONICAL: Dict[str, List[str]] = {
     # "B" side-keys "PM" family example
     "S8EG2B74PMB": ["S8G2B74PM-S01", "S8G2B74PM-S10", "S8G2B74PM"],
 
+    # F7 Gen1 — older platform, separate firmware from Gen2
+    "F7G1A8XE":  ["F7G1A8XE", "F7G1A8", "F7G1", "F7"],
+    "F7G1A8PE":  ["F7G1A8PE", "F7G1A8", "F7G1", "F7"],
+    "F7G1A8SE":  ["F7G1A8SE", "F7G1A8", "F7G1", "F7"],
+    "F7G110XE":  ["F7G110XE", "F7G1",   "F7"],
+
     # F7 Gen2 — two known hardware platforms: GDB6P (2022) and SOC5P (2023)
-    # XE/WE/SE = edition suffixes common on F7 retail SKUs
+    # XE/WE/SE = edition suffixes; -A/-EU/-NA/-AL = regional variants
     "F7G2A7XE":  ["F7G2A7XE", "F7G2A7", "F7-GDB6P", "F7-SOC5P", "F7"],
     "F7G2A7WE":  ["F7G2A7WE", "F7G2A7", "F7-GDB6P", "F7-SOC5P", "F7"],
     "F7G2A7SE":  ["F7G2A7SE", "F7G2A7", "F7-GDB6P", "F7-SOC5P", "F7"],
+    "F7G2A7XED": ["F7G2A7XED","F7G2A7", "F7-GDB6P", "F7-SOC5P", "F7"],
     "F7G2A7":    ["F7G2A7",   "F7-GDB6P", "F7-SOC5P", "F7"],
     "F7G2B7PE":  ["F7G2B7PE", "F7G2B7", "F7"],
     "F7G2B7WE":  ["F7G2B7WE", "F7G2B7", "F7"],
+    "F7G2B7XE":  ["F7G2B7XE", "F7G2B7", "F7"],
+    "F7G2B7XED": ["F7G2B7XED","F7G2B7", "F7"],
+
+    # F7 Gen2 numeric screen-size variants (10-inch G210, 11-inch G211)
+    "F7G209SE":  ["F7G209SE", "F7G209", "F7G2", "F7"],
+    "F7G210XE":  ["F7G210XE", "F7G210", "F7G2", "F7"],
+    "F7G210PE":  ["F7G210PE", "F7G210", "F7G2", "F7"],
+    "F7G211XE":  ["F7G211XE", "F7G211", "F7G2", "F7"],
+    "F7G211WE":  ["F7G211WE", "F7G211", "F7G2", "F7"],
+    "F7G211SE":  ["F7G211SE", "F7G211", "F7G2", "F7"],
+
+    # F7 Toyota / vehicle-fit — same F7G2 firmware platform
+    "F7TYC7XE":  ["F7TYC7XE", "F7G2A7XE", "F7G2A7", "F7-SOC5P", "F7"],
+    "F7TYC7SE":  ["F7TYC7SE", "F7G2A7SE", "F7G2A7", "F7"],
 
     # A6 Gen2 — shares UIS7862/6315 chip with S8 in some SKUs; try both PE and MS
     "A6EG2A74MSB": ["A6G2A74MS", "A6G2A7PE", "A6G2A74MS-S01", "A6G2A7"],
     "A6EG2A7PE":   ["A6G2A7PE",  "A6G2A74MS", "A6G2A7"],
     "A6G2A74MS":   ["A6G2A74MS", "A6G2A7PE",  "A6G2A7"],
     "A6G2A7PE":    ["A6G2A7PE",  "A6G2A74MS", "A6G2A7"],
+    # PF suffix = side-label Gen2 variant (April 2024+); firmware: ATOTO_A6_PF_7_Inch_OS_240627.zip
+    # NOTE: A6-H1-B is a separate incompatible hardware; do NOT cross-flash
+    "A6G2A7PF":    ["A6G2A7PF",  "A6G2A7PE",  "A6G2A7"],
+    "A6G2A7PF-S01":["A6G2A7PF",  "A6G2A7PE",  "A6G2A7"],
+    "A6G2A7PF-S02":["A6G2A7PF",  "A6G2A7PE",  "A6G2A7"],
+    "A6G2B7PF":    ["A6G2B7PF",  "A6G2B7PE",  "A6G2B7"],
     "A6G2B74PE":   ["A6G2B74PE", "A6G2B7PE",  "A6G2B7"],
+
+    # A6 vehicle-fit variants — confirmed same firmware platform as base A6G2A7PF
+    "A6TYC7PF":    ["A6G2A7PF",  "A6G2A7PE",  "A6G2A7"],   # Toyota
+    "A6VW07APF":   ["A6G2A7PF",  "A6G2A7PE",  "A6G2A7"],   # VW (confirmed = A6G2A7PF bundle)
+    "A6VW09PF":    ["A6G2A7PF",  "A6G2A7PE",  "A6G2A7"],   # VW 9-inch
+    "A6OP07APF":   ["A6G2A7PF",  "A6G2A7PE",  "A6G2A7"],   # Opel/Vauxhall
+
+    # A6 Y-series — different generation / OEM variant (platform IDs unconfirmed)
+    "A6Y2721P":    ["A6Y2721P",  "A6Y2721",   "A6Y27",  "A6"],
+    "A6Y2721PR":   ["A6Y2721PR", "A6Y2721",   "A6Y27",  "A6"],
+    "A6Y2710S":    ["A6Y2710S",  "A6Y2710",   "A6Y27",  "A6"],
+    "A6YTY721PR":  ["A6YTY721PR","A6Y2721PR", "A6Y27",  "A6"],   # Toyota
+    "A6YVW721PRB": ["A6YVW721PRB","A6Y2721PR","A6Y27",  "A6"],   # VW
 
     # P8 Gen2 — premium/flagship; MS and PE variants mirror S8 naming
     "P8EG2A74MSB": ["P8G2A74MS", "P8G2A7PE", "P8G2A74MS-S01", "P8G2A7"],
@@ -51,21 +91,43 @@ RETAIL_TO_CANONICAL: Dict[str, List[str]] = {
     "P8G2A74MS":   ["P8G2A74MS", "P8G2A7PE",  "P8G2A7"],
     "P8G2A7PE":    ["P8G2A7PE",  "P8G2A74MS", "P8G2A7"],
 
-    # X10 Gen2 — Qualcomm QCM6125; uses Redstone FOTA
+    # X10 Gen2 — Qualcomm QCM6125; uses Redstone FOTA (platform: qcm6125_T10)
     "X10G2A7E":    ["X10G2A7E",  "X10G2A7",   "X10G2",  "X10"],
     "X10G2A7PE":   ["X10G2A7PE", "X10G2A7",   "X10G2",  "X10"],
     "X10G2A7MS":   ["X10G2A7MS", "X10G2A7",   "X10G2",  "X10"],
     "X10EG2A7MSB": ["X10G2A7MS", "X10G2A7",   "X10G2",  "X10"],
     "X10G2A7":     ["X10G2A7",   "X10G2",     "X10"],
+    # B-variant and DAB variant — same QCM6125 platform, same Redstone FOTA
+    "X10G2B7E":    ["X10G2B7E",  "X10G2B7",   "X10G2",  "X10"],
+    "X10DG2B7E":   ["X10DG2B7E", "X10G2B7E",  "X10G2",  "X10"],  # DAB radio variant
+
+    # DS7 — newer flagship; shares UIS8581A chip family
+    "DS7G2A7PE":   ["DS7G2A7PE", "DS7G2A74MS", "DS7G2A7", "DS7G2",  "DS7"],
+    "DS7G2A74MS":  ["DS7G2A74MS","DS7G2A7PE",  "DS7G2A7", "DS7G2",  "DS7"],
+    "DS7G2A7":     ["DS7G2A7",   "DS7G2",      "DS7"],
+
+    # Z7 — compact flagship; follows same A7/MS/PE naming convention
+    "Z7G2A7PE":    ["Z7G2A7PE",  "Z7G2A74MS",  "Z7G2A7",  "Z7G2",   "Z7"],
+    "Z7G2A74MS":   ["Z7G2A74MS", "Z7G2A7PE",   "Z7G2A7",  "Z7G2",   "Z7"],
+    "Z7G2A7":      ["Z7G2A7",    "Z7G2",        "Z7"],
+
+    # F10 — 10-inch variant of F7; may share SOC5P / GDB6P platforms
+    "F10G2A7PE":   ["F10G2A7PE", "F10G2A7",    "F10G2",   "F10",    "F7-SOC5P"],
+    "F10G2A7":     ["F10G2A7",   "F10G2",      "F10",     "F7-SOC5P"],
+
+    # P7 — predecessor to P8; uses MediaTek MT8168 / 6762 class chipsets
+    "P7G2A7PE":    ["P7G2A7PE",  "P7G2A74MS",  "P7G2A7",  "P7G2",   "P7"],
+    "P7G2A74MS":   ["P7G2A74MS", "P7G2A7PE",   "P7G2A7",  "P7G2",   "P7"],
+    "P7G2A7":      ["P7G2A7",    "P7G2",        "P7"],
 }
 
 COMMON_VARIANTS = [
     "-S01","-S10","-S01W","-S10W","-S01R","-S10R",
     "S01","S10","S01W","S10W","S01R","S10R",
-    "-S02F", "-S04", "-PRN", "-S02", "-S10W",
-    "WE", "XE", "SE", "SD", # F7/S8 editions
-    "-A", "-EU", "-NA", "-AL", # Regions (Asia/Aus?, EU, North America, Latin America?)
-    "TYC", "VW", # Specific fitments (Toyota, VW)
+    "-S02F", "-S04", "-PRN", "-S02",
+    "WE", "XE", "SE", "SD", "XED",           # F7/S8 editions
+    "-A", "-EU", "-EU2", "-NA", "-AL",        # regional: Asia, Europe, Europe2, N.America, Latin America
+    "TYC", "VW",                              # vehicle-fit: Toyota, Volkswagen
     "-BETA", "-TEST", "_BETA", "_TEST",
     "-DEBUG", "_DEBUG",
 ]

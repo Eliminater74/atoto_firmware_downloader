@@ -9,7 +9,7 @@
 
 A powerful, open-source utility to **find, download, and modify** firmware for ATOTO car head units — **S8, A6, F7, P8, X10**, and more.
 
-> **v2.3.0** — Download history, retry logic, expanded model database (A6/P8/X10/F7 Gen2), newest-first results, full settings menu, and more. See [Changelog](#changelog).
+> **v2.4.0** — Batch / multi-select downloads, DS7/Z7/F10/P7 model support, `file.myatoto.com` CDN alias support, variant filter crash fix. See [Changelog](#changelog).
 
 ---
 
@@ -30,10 +30,18 @@ A powerful, open-source utility to **find, download, and modify** firmware for A
 | Series | Example SKUs |
 | ------ | ------------ |
 | S8 Gen2 | `S8EG2A74MSB`, `S8EG2A7PE`, `S8EG2B74PMB` |
-| A6 Gen2 | `A6EG2A74MSB`, `A6EG2A7PE`, `A6G2B74PE` |
-| F7 Gen2 | `F7G2A7XE`, `F7G2A7WE`, `F7G2A7SE`, `F7G2B7PE` |
+| A6 Gen2 | `A6EG2A74MSB`, `A6EG2A7PE`, `A6G2A7PF`, `A6G2B74PE` |
+| F7 Gen1 | `F7G1A8XE`, `F7G1A8PE`, `F7G110XE` |
+| F7 Gen2 7" | `F7G2A7XE`, `F7G2A7WE`, `F7G2A7SE`, `F7G2B7PE` |
+| F7 Gen2 10" | `F7G210XE-NA`, `F7G210PE-EU`, `F7G209SE` |
+| F7 Gen2 11" | `F7G211XE-NA`, `F7G211WE`, `F7G211SE` |
+| F7 Toyota | `F7TYC7XE-A`, `F7TYC7SE` |
+| F10 Gen2 | `F10G2A7PE`, `F10G2A7` |
+| P7 Gen2 | `P7G2A74MS`, `P7G2A7PE` |
 | P8 Gen2 | `P8EG2A74MSB`, `P8EG2A7PE` |
-| X10 Gen2 | `X10G2A7E`, `X10G2A7PE`, `X10EG2A7MSB` |
+| X10 Gen2 | `X10G2A7E`, `X10G2A7PE`, `X10EG2A7MSB`, `X10G2B7E`, `X10DG2B7E` |
+| DS7 Gen2 | `DS7G2A7PE`, `DS7G2A74MS` |
+| Z7 Gen2 | `Z7G2A7PE`, `Z7G2A74MS` |
 
 > Don't see your model? Try entering the base name (e.g. `F7`, `S8`) with **Deep Search** enabled.
 
@@ -168,13 +176,44 @@ If ATOTO support sends you a direct download link, you can:
 {
     "match": r"^(F7G2|F7).*$",          # regex matched against your model input
     "title": "F7 Gen2 (SOC5P) — 2023-06-09",
-    "url":   "https://atoto-usa.oss-us-west-1.aliyuncs.com//.../F7-SOC5P-230609.zip",
+    "url":   "https://atoto-usa.oss-us-west-1.aliyuncs.com/2023/.../F7-SOC5P-230609.zip",
 },
 ```
+
+> **Note on hostnames:** `file.myatoto.com` is a CDN alias for `atoto-usa.oss-us-west-1.aliyuncs.com`.
+> Both hostnames serve the same files — the tool normalizes and tries both automatically.
+> If support gives you a `file.myatoto.com/…` link it works in Manual URL Download directly.
+
+## Flashing Firmware
+
+1. Download the update ZIP via this tool and extract it on your PC.
+2. **Manually format** your USB drive or SD card using **Windows Disk Management** (right-click partition → Quick Format → NTFS or FAT32). Do not rely on the head unit to format the drive — manual prep gives the most reliable result.
+3. Copy **all extracted files** to the **root** of the formatted drive (no sub-folders).
+4. Insert the drive into the head unit while it is powered on.
+5. An update prompt appears automatically — tap **Start**.
+6. The update takes ~10 minutes; do not remove the drive or cut power.
+7. When complete a confirmation banner appears; remove the drive and the unit restarts.
+
+> **Before flashing:** Check your current build via  
+> *Settings → System → About device → MCU Version* (tap MCU Version 4× to reveal the full version string).  
+> Compare it to the firmware version — skip if you are already on that build.  
+> **A6 Gen2 note:** Beta releases prior to `A6G2A7PF_v1.1.1` (April 2024) had a UUID handling bug causing duplicate music library entries. Always use v1.1.1 or later.
 
 ---
 
 ## Changelog
+
+### v2.4.0
+
+- **Batch / multi-select downloads** — type `1,3` or `1-3` at the results prompt to queue multiple packages; Windows arrow-key mode gains Space-to-mark and `a`-to-select-all
+- **Redstone FOTA multi-version probing** — probes six known `swv` values per session to surface all historical X10 firmware (incremental and full); confirmed POST body from real network capture; [FULL] / [incremental] labels in results; MD5 checksum wired to hash field
+- **Expanded model database** — F7 Gen1, F7 10-inch / 11-inch numeric (G209/G210/G211), X10G2B7E / X10DG2B7E (B-variant / DAB), DS7, Z7, F10, P7, A6G2A7PF (all sub-variants), A6 vehicle-fit (TYC/VW/OP), A6 Y-series, regional suffixes `-EU2`/`XED` added to expansion
+- **A6G2A7PF mirror** — confirmed direct URL: `ATOTO_A6_PF_7_Inch_OS_240627_APP_240613.zip`
+- `file.myatoto.com` CDN alias — same Aliyun OSS bucket; tool normalizes and tries both hostnames for every mirror URL
+- Deep Search expanded — DS7, Z7, F7G1, F7G210/211, X10G2B7 added to deep-scan candidate expansion
+- Variant filter `None` crash fixed
+- Double `[cand]` prefix guard on JSON probe results
+- Flashing guide added to README with manual SD format tip and A6 Gen2 UUID bug warning
 
 ### v2.3.0
 
