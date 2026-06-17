@@ -7,11 +7,14 @@ from .ui import main_menu, run_search_download_flow, manual_url_flow
 from .core import setup_logging
 
 def parse_args():
+    from . import __version__
     ap = argparse.ArgumentParser(description="ATOTO Firmware Downloader (launcher)")
+    ap.add_argument("--version", action="version", version=f"atoto-fw {__version__}")
     ap.add_argument("--out", default="ATOTO_Firmware", help="Output directory")
     ap.add_argument("--verbose", action="store_true", help="Enable debug logging for core/network")
     ap.add_argument("--model", help="Search for specific model (bypass menu)")
     ap.add_argument("--res", default="1280x720", help="Resolution for search (default 1280x720)")
+    ap.add_argument("--mcu", default="", help="MCU version (optional, used with --model)")
     ap.add_argument("--deep", action="store_true", help="Enable Deep Search")
     ap.add_argument("--manual", help="Direct URL download")
     return ap.parse_args()
@@ -28,12 +31,11 @@ def main():
         return
         
     if args.model:
-        # Create ad-hoc profile from args
         p = {
             "name": "CLI",
             "model": args.model,
             "res": args.res,
-            "mcu": "",
+            "mcu": args.mcu,
             "variants": "ANY",
             "prefer_universal": True
         }

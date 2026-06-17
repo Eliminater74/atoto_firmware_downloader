@@ -53,21 +53,19 @@ def download_with_resume(
                 if on_progress:
                     on_progress(downloaded, total)
 
-    tmp.rename(out_path)
-    logger.debug("Download finished: %s (%d bytes)", out_path, out_path.stat().st_size)
-
     if expected_hash:
-        logger.debug("Verifying checksum (%s)", "auto")
+        logger.debug("Verifying checksum before finalizing")
+        import hashlib
         algo = "sha256" if len(expected_hash) == 64 else ("sha1" if len(expected_hash) == 40 else "md5")
-        if algo == "sha256":
-            digest = sha256_file(out_path)
-        else:
-            import hashlib
-            h = getattr(hashlib, algo)()
-            with out_path.open("rb") as f:
-                for chunk in iter(lambda: f.read(1024 * 1024), b""):
-                    h.update(chunk)
-            digest = h.hexdigest()
+        h = hashlib.new(algo)
+        with tmp.open("rb") as f:
+            for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                h.update(chunk)
+        digest = h.hexdigest()
         if digest.lower() != expected_hash.lower():
+            tmp.unlink(missing_ok=True)
             raise RuntimeError(f"Checksum mismatch: expected {expected_hash}, got {digest}")
         logger.debug("Checksum OK")
+
+    tmp.rename(out_path)
+    logger.debug("Download finished: %s (%d bytes)", out_path, out_path.stat().st_size)

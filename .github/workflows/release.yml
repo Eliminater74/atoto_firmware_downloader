@@ -1,0 +1,85 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install requests rich brotli
+
+      - name: Verify tool imports cleanly
+        run: python -c "import atoto_fw; print('Version:', atoto_fw.__version__)"
+
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+
+      - name: Build release archive
+        run: |
+          ZIP_NAME="atoto_firmware_downloader-${{ steps.version.outputs.VERSION }}.zip"
+          zip -r "$ZIP_NAME" . \
+            --exclude "*.git*" \
+            --exclude "*__pycache__*" \
+            --exclude "*.pyc" \
+            --exclude "*.pyo" \
+            --exclude "*.part" \
+            --exclude "*.bak.json" \
+            --exclude "*.tmp" \
+            --exclude "ATOTO_Firmware/*" \
+            --exclude ".github/*" \
+            --exclude "*.egg-info/*" \
+            --exclude "dist/*" \
+            --exclude "build/*" \
+            --exclude ".venv/*" \
+            --exclude "venv/*"
+          echo "ZIP_NAME=$ZIP_NAME" >> "$GITHUB_OUTPUT"
+        id: build
+
+      - name: Generate release notes
+        id: notes
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          cat <<EOF > release_notes.md
+          ## ATOTO Firmware Downloader $VERSION
+
+          ### Installation
+          1. Download the ZIP below and extract it anywhere.
+          2. Install dependencies: \`pip install requests rich brotli\`
+          3. Run: \`python atoto.py\`
+
+          ### Requirements
+          - Python 3.9 or higher
+          - Windows / Linux / macOS
+
+          ### What's new
+          See [CHANGELOG in README](https://github.com/${{ github.repository }}/blob/main/README.md#changelog) for full details.
+          EOF
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.VERSION }}
+          name: "ATOTO Firmware Downloader ${{ steps.version.outputs.VERSION }}"
+          body_path: release_notes.md
+          files: ${{ steps.build.outputs.ZIP_NAME }}
+          draft: false
+          prerelease: ${{ contains(steps.version.outputs.VERSION, 'beta') || contains(steps.version.outputs.VERSION, 'rc') }}
+          generate_release_notes: true

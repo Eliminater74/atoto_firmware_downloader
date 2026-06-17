@@ -5,13 +5,14 @@ UI layer for ATOTO Firmware Downloader
 
 - Profiles (persisted): model / MCU / resolution / variant prefs / prefer-universal
 - Rich menu + results table
-- Live status while probing API/JSON/mirrors (no more “stuck at starting”)
+- Live status while probing API/JSON/mirrors (no more "stuck at starting")
 - Resume download with progress + optional checksum verify
 - Advanced / Add-ons menu (e.g., OTA extractor)
 """
 
 from __future__ import annotations
 import re
+import requests
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -36,6 +37,7 @@ from .core import (
     load_cfg,
     save_cfg,
     config_path,
+    add_history_entry,
 )
 from .core.utils import url_leaf_name  # leaf filename helper
 from .tui import Menu, header_art, clear_screen, safe_filename, msvcrt, section
@@ -48,15 +50,75 @@ except Exception:
 
 console = Console()
 
+# ── Thread-safe background update check ──────────────────────────────────────
+import threading as _threading
+_update_result: list = []
+_update_lock   = _threading.Lock()
+_update_thread: "Optional[_threading.Thread]" = None
+
+def _start_update_check() -> None:
+    global _update_thread
+    if _update_thread is not None:
+        return
+    def _worker():
+        try:
+            from . import __version__ as _ver
+            from .core.utils import check_github_update
+            res = check_github_update(_ver)
+            if res:
+                with _update_lock:
+                    _update_result.append(res)
+        except Exception:
+            pass
+    _update_thread = _threading.Thread(target=_worker, daemon=True)
+    _update_thread.start()
+
+def _poll_update() -> "Optional[tuple]":
+    """Return (tag, url) if an update was found, else None. Non-blocking."""
+    with _update_lock:
+        return _update_result[0] if _update_result else None
+
+def _open_folder(path: Path) -> None:
+    """Open a folder in the OS file manager (best-effort, never raises)."""
+    import subprocess, sys
+    try:
+        if sys.platform == "win32":
+            import os; os.startfile(str(path))
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", str(path)])
+        else:
+            subprocess.Popen(["xdg-open", str(path)])
+    except Exception:
+        pass
+
 # ────────────────────────── Profile UI ──────────────────────────
 def prompt_profile(existing: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     clear_screen(console)
     console.print(Panel.fit("Create / Edit Profile", border_style="cyan"))
     prof = dict(existing or {})
-    prof["name"]  = Prompt.ask("Profile name", default=prof.get("name", "My S8"))
+    while True:
+        name = Prompt.ask("Profile name", default=prof.get("name", "My S8")).strip()
+        if name:
+            prof["name"] = name
+            break
+        console.print("[red]Profile name cannot be empty.[/]")
     prof["model"] = Prompt.ask("Model / Device name", default=prof.get("model", "S8EG2A74MSB")).upper().strip()
     prof["mcu"]   = Prompt.ask("MCU version (Optional - helps find newer firmware)", default=prof.get("mcu", "")).strip()
-    prof["res"]   = Prompt.ask("Display resolution", default=prof.get("res", "1280x720")).strip()
+    _res_items = [
+        ("1280x720  (S8 / A6 QLED / F7 PE / X10)", "1280x720"),
+        ("1024x600  (Standard 7- / 9- / 10-inch)",  "1024x600"),
+        ("800x480   (Older / budget units)",         "800x480"),
+        ("Custom / Other",                           "CUSTOM"),
+    ]
+    _cur_res = prof.get("res", "1280x720")
+    _res_menu = Menu(console, _res_items,
+                     title="Display Resolution",
+                     subtitle=f"Current: {_cur_res} — arrow keys to select")
+    _res_pick = _res_menu.show()
+    if _res_pick == "CUSTOM" or not _res_pick:
+        prof["res"] = Prompt.ask("Enter resolution (e.g. 800x480)", default=_cur_res).strip()
+    else:
+        prof["res"] = _res_pick
 
     vdefault = prof.get("variants", "ANY")
     v = Prompt.ask("Variant prefs (MS,PE,PM or ANY)", default=vdefault).upper().replace(" ", "")
@@ -95,16 +157,26 @@ def prompt_adhoc_params() -> Optional[Dict[str, Any]]:
     else:
         res = choice
 
-    # 3. Variants (Keep simple or Menu? Let's stick to simple defaults for 'Quick')
-    # Most users just want ANY.
-    
+    # 3. MCU (optional — press Enter to skip)
+    mcu = Prompt.ask(
+        "MCU version [dim](optional — press Enter to skip)[/]",
+        default=""
+    ).strip()
+
+    # 4. Deep Search toggle
+    deep = Confirm.ask(
+        "Enable Deep Search? [dim](slower — tries many more model variants)[/]",
+        default=False
+    )
+
     return {
         "name": "Ad-hoc",
         "model": model,
         "res": res,
-        "mcu": "",
+        "mcu": mcu,
         "variants": "ANY",
-        "prefer_universal": True
+        "prefer_universal": True,
+        "_deep": deep,
     }
 
 def profile_menu(cfg: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -170,22 +242,47 @@ def profile_menu(cfg: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             return cfg["profiles"][key]
 
 # ────────────────────────── Results table & selection ──────────────────────────
+def _parse_selection(raw: str, max_n: int) -> List[int]:
+    """Parse '1', '1,3', '1-3', '1,3-5' into sorted 0-based indices."""
+    indices: set = set()
+    for part in raw.split(","):
+        part = part.strip()
+        if "-" in part:
+            lo_s, _, hi_s = part.partition("-")
+            try:
+                lo, hi = int(lo_s.strip()), int(hi_s.strip())
+                indices.update(range(max(1, lo), min(max_n, hi) + 1))
+            except ValueError:
+                pass
+        elif part.isdigit():
+            v = int(part)
+            if 1 <= v <= max_n:
+                indices.add(v)
+    return sorted(i - 1 for i in indices)
+
+
 def render_and_pick(
     rows: List[Dict[str, Any]],
     my_res: str,
     prefer_universal: bool,
     want_variants: List[str],
-) -> Optional[Dict[str, Any]]:
-    # annotate & merge
+    downloaded_urls: "Optional[set]" = None,
+) -> List[Dict[str, Any]]:
+    """Return a list of selected packages (empty = canceled)."""
     tag_rows(rows, my_res)
     grouped = group_by_url(rows)
-    if isinstance(grouped, dict):  # robustness if backend returns a dict someday
+    if isinstance(grouped, dict):
         grouped = list(grouped.values())
+
+    if downloaded_urls:
+        for r in grouped:
+            if r.get("url") in downloaded_urls:
+                r["fit"] = "✓ DL"
 
     def row_ok(r: Dict[str, Any]) -> bool:
         if prefer_universal and not r.get("scope", "").startswith("Universal"):
             return False
-        if want_variants and r.get("variants") not in ("-", ""):
+        if want_variants and r.get("variants") not in ("-", "", None):
             row_vars = set(r["variants"].split(","))
             if not (row_vars & set(want_variants)):
                 return False
@@ -193,175 +290,246 @@ def render_and_pick(
 
     filt = [r for r in grouped if row_ok(r)] or grouped
 
-    # Interactive Table Selection
     idx = 0
+    selected: set = set()  # 0-based indices toggled via Space (msvcrt only)
+
+    _src_color = {"API": "green", "JSON": "cyan", "MIRROR": "yellow", "Redstone": "magenta"}
+    cols = [
+        ("id", "#"), ("source", "Src"), ("title", "Title"), ("version", "Ver"),
+        ("date", "Date"), ("size", "Size"), ("res", "Res"), ("scope", "Scope"),
+        ("variants", "Variants"), ("fit", "Fit"), ("url", "URL")
+    ]
+    col_specs = {
+        "Title":    {"max_width": 40, "overflow": "ellipsis", "no_wrap": True},
+        "URL":      {"max_width": 30, "overflow": "ellipsis", "no_wrap": True},
+        "Ver":      {"max_width": 20, "overflow": "ellipsis", "no_wrap": True},
+        "Date":     {"no_wrap": True, "min_width": 10},
+        "Size":     {"no_wrap": True, "min_width": 8},
+        "Res":      {"no_wrap": True},
+        "Src":      {"no_wrap": True},
+        "Scope":    {"max_width": 15, "overflow": "ellipsis", "no_wrap": True},
+        "Variants": {"max_width": 10, "overflow": "fold"},
+    }
+
     while True:
         section(
             console,
             "Firmware Results",
             "Universal = not tied to a specific resolution. "
-            "Res-specific = package names that explicitly mention 1024×600 or 1280×720."
+            "Res-specific = package names that explicitly mention 1024x600 or 1280x720."
         )
+        hint_nav = "Use arrows + Space to multi-select, Enter to confirm" if msvcrt else "Enter numbers to select (e.g. 1  or  1,3  or  1-3)"
         console.print(Panel.fit(
-            "[bold]Tip[/]: Prefer Universal packages for the same device family; "
+            f"[bold]Tip[/]: Prefer Universal packages for the same device family; "
             "use Res-specific only when a package explicitly targets your screen.\n"
             f"[dim]Profile Fit: {my_res or '?'} · Variant prefs: "
             f"{', '.join(want_variants) if want_variants else 'ANY'} · "
-            f"Scope: {'Universal preferred' if prefer_universal else 'All'}[/]",
+            f"Scope: {'Universal preferred' if prefer_universal else 'All'} · {hint_nav}[/]",
             border_style="cyan"
         ))
 
         table = Table(
-            title="Available Packages (Use Up/Down and Enter)",
+            title="Available Packages",
             show_lines=False,
             header_style="bold magenta",
             box=box.SIMPLE_HEAVY
         )
-        cols = [
-            ("id", "#"), ("source", "Src"), ("title", "Title"), ("version", "Ver"),
-            ("date", "Date"), ("size", "Size"), ("res", "Res"), ("scope", "Scope"),
-            ("variants", "Variants"), ("fit", "Fit"), ("url", "URL")
-        ]
-        
-        # Specific styling to ensure all columns fit
-        col_specs = {
-            "Title": {"max_width": 40, "overflow": "ellipsis", "no_wrap": True},
-            "URL":   {"max_width": 30, "overflow": "ellipsis", "no_wrap": True},
-            "Ver":   {"max_width": 20, "overflow": "ellipsis", "no_wrap": True},
-            "Date":  {"no_wrap": True, "min_width": 10},
-            "Size":  {"no_wrap": True, "min_width": 8},
-            "Res":   {"no_wrap": True},
-            "Src":   {"no_wrap": True},
-            "Scope": {"max_width": 15, "overflow": "ellipsis", "no_wrap": True},
-            "Variants": {"max_width": 10, "overflow": "fold"},
-        }
-
         for _, hdr in cols:
-            spec = col_specs.get(hdr, {})
-            # Default fallback
-            if not spec:
-                spec = {"overflow": "fold"}
+            spec = col_specs.get(hdr, {"overflow": "fold"})
             table.add_column(hdr, **spec)
 
-        # Rendering for specific index
         for i, r in enumerate(filt):
             r_view = r.copy()
-            r_view["id"] = str(i+1)
+            r_view["id"] = "[x]" if i in selected else str(i + 1)
             r_view["size"] = human_size(r.get("size"))
-            
-            style = "reverse bold cyan" if i == idx and msvcrt else ""
-            
-            # Add row with style
+            src = r.get("source", "?")
+            r_view["source"] = f"[{_src_color.get(src, 'dim')}]{src}[/]"
+
+            is_cursor = bool(msvcrt) and (i == idx)
+            is_sel    = i in selected
+            if is_cursor and is_sel:
+                style = "reverse bold green"
+            elif is_cursor:
+                style = "reverse bold cyan"
+            elif is_sel:
+                style = "bold green"
+            else:
+                style = ""
             table.add_row(*[str(r_view.get(k, "")) for k, _ in cols], style=style)
 
         console.print(table)
-        console.print(f"[dim]Selected: #{idx+1} (Total {len(filt)}) · Esc/0 to Cancel[/]")
 
         if not msvcrt:
-             # Fallback
-            raw = Prompt.ask("Select # (0 to cancel)", default="1").strip()
-            if raw == "0" or not raw.isdigit(): return None
-            v = int(raw)
-            if 1 <= v <= len(filt): return filt[v-1]
-            return None
+            console.print(f"[dim]Total {len(filt)} packages[/]")
+            raw = Prompt.ask(
+                "Select #s (e.g. 1  or  1,3  or  1-3; 0 to cancel)",
+                default="1"
+            ).strip()
+            if raw == "0" or not raw:
+                return []
+            indices = _parse_selection(raw, len(filt))
+            if not indices:
+                return []
+            chosen_items = [filt[i] for i in indices]
+            result = []
+            for item in chosen_items:
+                if item.get("fit") == "⚠":
+                    console.print(
+                        f"[yellow]Heads-up:[/] {item.get('title', '')} looks like "
+                        f"[bold]{item.get('res', '?')}[/], profile is [bold]{my_res}[/]."
+                    )
+                    if not Confirm.ask("Include anyway?", default=False):
+                        continue
+                result.append(item)
+            return result
+
+        sel_info = f" · {len(selected)} marked" if selected else ""
+        console.print(
+            f"[dim]Cursor: #{idx+1}/{len(filt)}{sel_info} · "
+            "arrows=navigate · Space=mark · a=all · Enter=confirm · Esc=cancel[/]"
+        )
 
         key = msvcrt.getch()
         if key in (b'\000', b'\xe0'):
             key = msvcrt.getch()
-            if key == b'H': idx = max(0, idx - 1)
-            elif key == b'P': idx = min(len(filt) - 1, idx + 1)
+            if key == b'H':
+                idx = max(0, idx - 1)
+            elif key == b'P':
+                idx = min(len(filt) - 1, idx + 1)
+        elif key == b' ':
+            if idx in selected:
+                selected.discard(idx)
+            else:
+                selected.add(idx)
+        elif key in (b'a', b'A'):
+            if len(selected) == len(filt):
+                selected.clear()
+            else:
+                selected.update(range(len(filt)))
         elif key == b'\r':
             break
-        elif key in (b'\x1b', b'0'): 
-            return None
+        elif key in (b'\x1b', b'0'):
+            return []
 
-    choice = filt[idx]
-    if choice.get("fit") == "⚠":
-        console.print(
-            f"[yellow]Heads-up:[/] package looks like [bold]{choice.get('res','?')}[/], "
-            f"profile is [bold]{my_res}[/]."
-        )
-        if not Confirm.ask("Continue anyway?", default=False):
-            return None
-    return choice
+    # msvcrt: build result from marked rows (or cursor row if nothing marked)
+    chosen_items = [filt[i] for i in sorted(selected)] if selected else [filt[idx]]
+    result = []
+    for item in chosen_items:
+        if item.get("fit") == "⚠":
+            console.print(
+                f"[yellow]Heads-up:[/] {item.get('title', '')} looks like "
+                f"[bold]{item.get('res', '?')}[/], profile is [bold]{my_res}[/]."
+            )
+            if not Confirm.ask("Include anyway?", default=False):
+                continue
+        result.append(item)
+    return result
 
 # ────────────────────────── Download ──────────────────────────
-def download_with_progress(url: str, out_path: Path, expected_hash: str = "", session=None) -> None:
-    tmp = out_path.with_suffix(out_path.suffix + ".part")
-    resume = tmp.stat().st_size if tmp.exists() else 0
-    headers = {"Range": f"bytes={resume}-"} if resume > 0 else {}
+_RETRY_ON = (
+    "requests.exceptions.ChunkedEncodingError",
+    "requests.exceptions.ConnectionError",
+    "requests.exceptions.Timeout",
+)
+_MAX_DL_RETRIES = 3
 
-    # late import to avoid circulars
+def download_with_progress(url: str, out_path: Path, expected_hash: str = "", session=None) -> None:
+    import time, hashlib
+    import requests as _req
+
     from .core import SESSION
-    
     sess = session if session else SESSION
 
-    with sess.get(url, stream=True, headers=headers, timeout=30) as r:
-        r.raise_for_status()
-        total = int(r.headers.get("Content-Length", "0"))
-        if r.status_code == 206:
-            # try to learn the *full* size for progress bar
-            try:
-                full = SESSION.head(url, timeout=8, allow_redirects=True)
-                total = int(full.headers.get("Content-Length", 0))
-            except Exception:
-                pass
-        
-        # If total is 0, set to None for indeterminate progress bar
-        p_total = total if total > 0 else None
+    tmp = out_path.with_suffix(out_path.suffix + ".part")
 
-        mode = "ab" if resume > 0 else "wb"
-        downloaded = resume
-        task_desc = f"[bold]Downloading[/] {out_path.name}"
-        with Progress(
-            TextColumn(task_desc, justify="left"),
-            BarColumn(),
-            TransferSpeedColumn(),
-            TextColumn("{task.completed:>10.0f}/{task.total:>10.0f} B"),
-            TimeRemainingColumn(),
-            console=console,
-            transient=False
-        ) as progress:
-            task_id = progress.add_task("dl", total=p_total, completed=downloaded)
-            with open(tmp, mode) as f:
-                for chunk in r.iter_content(chunk_size=128 * 1024):
-                    if not chunk:
-                        continue
-                    f.write(chunk)
-                    downloaded += len(chunk)
-                    progress.update(task_id, completed=downloaded)
-        tmp.rename(out_path)
+    for attempt in range(_MAX_DL_RETRIES + 1):
+        # Re-read resume point each attempt so partial progress is kept
+        resume = tmp.stat().st_size if tmp.exists() else 0
+        headers = {"Range": f"bytes={resume}-"} if resume > 0 else {}
+
+        try:
+            with sess.get(url, stream=True, headers=headers, timeout=30) as r:
+                r.raise_for_status()
+
+                # Server ignored Range header — discard stale .part to avoid corruption
+                if resume > 0 and r.status_code == 200:
+                    console.print("[yellow]Server does not support resume — restarting.[/]")
+                    tmp.unlink(missing_ok=True)
+                    resume = 0
+
+                total = int(r.headers.get("Content-Length", "0"))
+                if r.status_code == 206 and total:
+                    try:
+                        full = SESSION.head(url, timeout=8, allow_redirects=True)
+                        total = int(full.headers.get("Content-Length", 0))
+                    except Exception:
+                        total = resume + total
+
+                p_total = (resume + total) if total > 0 else None
+                mode = "ab" if resume > 0 else "wb"
+                downloaded = resume
+
+                task_desc = f"[bold]Downloading[/] {out_path.name}"
+                try:
+                    with Progress(
+                        TextColumn(task_desc, justify="left"),
+                        BarColumn(),
+                        TransferSpeedColumn(),
+                        TextColumn("{task.completed:>10.0f}/{task.total:>10.0f} B"),
+                        TimeRemainingColumn(),
+                        console=console,
+                        transient=False,
+                    ) as progress:
+                        task_id = progress.add_task("dl", total=p_total, completed=downloaded)
+                        with open(tmp, mode) as f:
+                            for chunk in r.iter_content(chunk_size=128 * 1024):
+                                if not chunk:
+                                    continue
+                                f.write(chunk)
+                                downloaded += len(chunk)
+                                progress.update(task_id, completed=downloaded)
+                except KeyboardInterrupt:
+                    console.print(
+                        f"\n[yellow]Download paused.[/] Partial file kept — next run will resume.\n"
+                        f"[dim]{tmp}[/]"
+                    )
+                    raise
+            break  # success — exit retry loop
+
+        except KeyboardInterrupt:
+            raise
+        except (_req.exceptions.ChunkedEncodingError,
+                _req.exceptions.ConnectionError,
+                _req.exceptions.Timeout) as exc:
+            if attempt >= _MAX_DL_RETRIES:
+                raise
+            wait = 2 ** attempt
+            console.print(
+                f"[yellow]Network error ({exc.__class__.__name__}) — "
+                f"retrying in {wait}s ({attempt + 1}/{_MAX_DL_RETRIES})…[/]"
+            )
+            time.sleep(wait)
+
+    tmp.rename(out_path)
 
     if expected_hash:
         console.print("Verifying checksum…")
         algo = "sha256" if len(expected_hash) == 64 else ("sha1" if len(expected_hash) == 40 else "md5")
-        if algo == "sha256":
-            digest = sha256_file(out_path)
-        elif algo == "sha1":
-            import hashlib
-            h = hashlib.sha1()
-            with out_path.open("rb") as f:
-                for chunk in iter(lambda: f.read(1024 * 1024), b""):
-                    h.update(chunk)
-            digest = h.hexdigest()
-        else:
-            import hashlib
-            h = hashlib.md5()
-            with out_path.open("rb") as f:
-                for chunk in iter(lambda: f.read(1024 * 1024), b""):
-                    h.update(chunk)
-            digest = h.hexdigest()
-
+        h = hashlib.new(algo)
+        with out_path.open("rb") as f:
+            for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                h.update(chunk)
+        digest = h.hexdigest()
         if digest.lower() != expected_hash.lower():
             console.print(f"[red]Checksum mismatch![/] expected {expected_hash}, got {digest}")
         else:
             console.print(f"[green]Checksum OK[/] ({algo})")
-    
+
     console.print(f"\n[bold green]Download Complete![/] Saved to: {out_path.name}")
     console.input("[dim]Press Enter to continue...[/]")
 
 # ────────────────────────── Search & Download flow ──────────────────────────
-def run_search_download_flow(profile: Dict[str, Any], out_base: Path, verbose: bool, deep_scan: bool = False) -> None:
+def run_search_download_flow(profile: Dict[str, Any], out_base: Path, verbose: bool, deep_scan: bool = False, include_beta: bool = False) -> None:
     model = profile.get("model", "").strip() or Prompt.ask("Model / Device", default="S8EG2A74MSB").strip()
     mcu   = profile.get("mcu", "").strip()
     my_res = profile.get("res", "1280x720").strip()
@@ -382,7 +550,7 @@ def run_search_download_flow(profile: Dict[str, Any], out_base: Path, verbose: b
             if verbose:
                 console.log(msg)
 
-        rows, hits = try_lookup(model, mcu, progress=progress_cb, deep_scan=deep_scan)
+        rows, hits = try_lookup(model, mcu, progress=progress_cb, deep_scan=deep_scan, include_beta=include_beta)
 
     # optional verbose normalization view
     if verbose:
@@ -403,63 +571,158 @@ def run_search_download_flow(profile: Dict[str, Any], out_base: Path, verbose: b
         console.print(tbl)
 
     if not rows:
+        tips = [
+            "1. Try a simpler model name in [cyan]Ad-hoc Search[/] (e.g. just [bold]F7[/] or [bold]S8[/]).",
+            "2. If you have a download link from support, use [cyan]Manual URL Download[/].",
+        ]
+        if not deep_scan:
+            tips.insert(0, "0. [bold green]Enable Deep Search[/] — it tries many more model variants and platforms.")
+        if mcu:
+            tips.append(f"3. Remove the MCU version ([bold]{mcu}[/]) from your profile and try again.")
         section(
             console,
-            "No Packages Found (0 matches)",
-            f"[yellow]We looked everywhere for '{model}' but found no public files.[/]\n"
-            "This usually means ATOTO hasn't uploaded them to the update server.\n\n"
-            "[bold]Tips:[/]\n"
-            "1. Try a simpler model name in [cyan]Ad-hoc Search[/] (e.g. just 'F7' or 'S8').\n"
-            "2. If you have a download link from support, use [cyan]Manual URL Download[/]."
+            "No Packages Found",
+            f"[yellow]Nothing found for '[bold]{model}[/]' across API, JSON, and mirrors.[/]\n\n"
+            "[bold]Suggestions:[/]\n" + "\n".join(tips)
         )
         return
 
+    import shutil
+    from datetime import datetime
+
+    _dl_urls = {e["url"] for e in load_cfg().get("history", [])}
+    model_for_path = (hits[0] if hits else model)
+
     while True:
-        chosen = render_and_pick(rows, my_res, prefer_universal, variants_pref)
-        if not chosen:
+        chosen_list = render_and_pick(rows, my_res, prefer_universal, variants_pref,
+                                      downloaded_urls=_dl_urls)
+        if not chosen_list:
             section(console, "Canceled")
             return
 
-        # Show full details before confirming
-        console.print(Panel(
-            f"[bold cyan]Title:[/] {chosen.get('title')}\n"
-            f"[bold cyan]Version:[/] {chosen.get('version')}\n"
-            f"[bold cyan]Date:[/] {chosen.get('date')}\n"
-            f"[bold cyan]Size:[/] {human_size(chosen.get('size'))}\n"
-            f"[bold cyan]Resolution:[/] {chosen.get('res')}\n"
-            f"[bold cyan]Scope:[/] {chosen.get('scope')}\n"
-            f"[bold cyan]URL:[/] [link={chosen.get('url')}]{chosen.get('url')}[/]",
-            title="📦 Selected Package Details",
-            border_style="green",
-            expand=False
-        ))
+        if len(chosen_list) == 1:
+            chosen_single = chosen_list[0]
+            console.print(Panel(
+                f"[bold cyan]Title:[/] {chosen_single.get('title')}\n"
+                f"[bold cyan]Version:[/] {chosen_single.get('version')}\n"
+                f"[bold cyan]Date:[/] {chosen_single.get('date')}\n"
+                f"[bold cyan]Size:[/] {human_size(chosen_single.get('size'))}\n"
+                f"[bold cyan]Resolution:[/] {chosen_single.get('res')}\n"
+                f"[bold cyan]Scope:[/] {chosen_single.get('scope')}\n"
+                f"[bold cyan]URL:[/] [link={chosen_single.get('url')}]{chosen_single.get('url')}[/]",
+                title="Selected Package Details",
+                border_style="green",
+                expand=False
+            ))
+            if Confirm.ask("Download this firmware?", default=True):
+                items_to_download = chosen_list
+                break
+            console.print("[dim]Returning to list...[/]")
+        else:
+            batch_tbl = Table(
+                title=f"Batch Download — {len(chosen_list)} packages",
+                box=box.SIMPLE_HEAVY,
+                header_style="bold magenta"
+            )
+            batch_tbl.add_column("#", style="dim", no_wrap=True)
+            batch_tbl.add_column("Title", max_width=40, overflow="ellipsis")
+            batch_tbl.add_column("Version", max_width=20, overflow="ellipsis")
+            batch_tbl.add_column("Size", no_wrap=True)
+            for bi, bitem in enumerate(chosen_list, 1):
+                batch_tbl.add_row(
+                    str(bi),
+                    bitem.get("title", ""),
+                    bitem.get("version", ""),
+                    human_size(bitem.get("size")),
+                )
+            console.print(batch_tbl)
+            if Confirm.ask(f"Download all {len(chosen_list)} packages?", default=True):
+                items_to_download = chosen_list
+                break
+            console.print("[dim]Returning to list...[/]")
 
-        if Confirm.ask("Download this firmware?", default=True):
-            break
-        # If 'No', loop back to list
-        console.print("[dim]Returning to list...[/]")
-
-    model_for_path = (hits[0] if hits else model)
     out_dir = out_base / safe_filename(model_for_path)
     out_dir.mkdir(parents=True, exist_ok=True)
-    filename = safe_filename(f"{model_for_path}_{chosen.get('version','NAv')}_{url_leaf_name(chosen['url'])}")
-    out_path = out_dir / filename
 
-    section(
-        console,
-        "Download Ready",
-        f"Saving to: {out_path}\nReported size: {human_size(chosen.get('size'))}\n\nPress Ctrl+C to cancel"
-    )
-    try:
-        download_with_progress(chosen["url"], out_path, expected_hash=chosen.get("hash", ""))
-        section(console, "Download Complete")
-        console.print(f"[green]Done![/] File saved:\n[bold]{out_path}[/]")
-    except KeyboardInterrupt:
-        section(console, "Interrupted")
-        console.print("[yellow]Interrupted by user.[/]")
-    except Exception as e:
-        section(console, "Download Failed")
-        console.print(f"[red]Download failed:[/] {e}")
+    for dl_idx, chosen in enumerate(items_to_download, 1):
+        if len(items_to_download) > 1:
+            section(console, f"Item {dl_idx}/{len(items_to_download)}", chosen.get("title", ""))
+
+        filename = safe_filename(
+            f"{model_for_path}_{chosen.get('version', 'NAv')}_{url_leaf_name(chosen['url'])}"
+        )
+        out_path = out_dir / filename
+
+        # ── File-exists check ─────────────────────────────────────────────────
+        if out_path.exists():
+            existing_mb = out_path.stat().st_size / 1_048_576
+            console.print(
+                f"\n[yellow]File already exists:[/] {out_path.name} "
+                f"([bold]{existing_mb:.1f} MB[/])"
+            )
+            fc = Menu(console, [
+                ("Re-download (overwrite)",   "overwrite"),
+                ("Skip — keep existing file", "skip"),
+            ], title="File Exists").show()
+            if fc == "skip" or not fc:
+                console.print("[dim]Skipped — using existing file.[/]")
+                continue
+            out_path.unlink()
+
+        # ── Disk-space check ──────────────────────────────────────────────────
+        pkg_size = chosen.get("size") or 0
+        if pkg_size:
+            free = shutil.disk_usage(out_dir).free
+            if free < pkg_size:
+                console.print(
+                    f"\n[red]Not enough disk space.[/] "
+                    f"Need [bold]{human_size(pkg_size)}[/], "
+                    f"only [bold]{human_size(free)}[/] free on that drive."
+                )
+                if not Confirm.ask("Try anyway?", default=False):
+                    continue
+
+        section(
+            console,
+            "Download Ready",
+            f"Saving to: {out_path}\nReported size: {human_size(pkg_size or None)}\n\nPress Ctrl+C to pause"
+        )
+        try:
+            download_with_progress(chosen["url"], out_path, expected_hash=chosen.get("hash", ""))
+            section(console, "Download Complete" if len(items_to_download) == 1 else f"Done {dl_idx}/{len(items_to_download)}")
+            console.print(f"[green]Saved:[/] {out_path}")
+
+            _cfg = load_cfg()
+            add_history_entry(_cfg, {
+                "model":         model,
+                "title":         chosen.get("title", ""),
+                "version":       chosen.get("version", ""),
+                "date":          chosen.get("date", ""),
+                "url":           chosen.get("url", ""),
+                "file":          str(out_path),
+                "downloaded_at": datetime.now().isoformat(timespec="seconds"),
+            })
+            _dl_urls.add(chosen["url"])
+
+            if dl_idx == len(items_to_download):
+                if _cfg.get("auto_open_folder"):
+                    _open_folder(out_dir)
+                elif Confirm.ask("Open download folder?", default=True):
+                    _open_folder(out_dir)
+
+        except KeyboardInterrupt:
+            section(console, "Paused")
+            console.print(
+                "[yellow]Download paused.[/] The partial file has been kept.\n"
+                "Run the same search and select this firmware again to resume."
+            )
+            break
+        except Exception as e:
+            section(console, "Download Failed")
+            console.print(f"[red]Download failed:[/] {e}")
+            if len(items_to_download) > 1:
+                if not Confirm.ask("Continue with remaining packages?", default=True):
+                    break
 
 # ────────────────────────── Advanced / Add-ons menu ──────────────────────────
 def addons_menu() -> None:
@@ -499,9 +762,17 @@ def manual_url_flow(download_dir: Path) -> None:
         return
     download_dir.mkdir(parents=True, exist_ok=True)
     out = download_dir / safe_filename(url_leaf_name(url))
-    section(console, "Download Ready", f"Saving to: {out}\n\nPress Ctrl+C to cancel")
+
+    if out.exists():
+        console.print(f"\n[yellow]File already exists:[/] {out.name} ({out.stat().st_size / 1_048_576:.1f} MB)")
+        skip = not Confirm.ask("Re-download (overwrite)?", default=False)
+        if skip:
+            console.print("[dim]Skipped.[/]")
+            return
+        out.unlink()
+
+    section(console, "Download Ready", f"Saving to: {out}\n\nPress Ctrl+C to pause")
     try:
-        # Create session with robust headers (mimicking Android) to avoid CDN rejection
         s = requests.Session()
         s.headers.update({
             "User-Agent": "Dalvik/2.1.0 (Linux; U; Android 10; X10G2A7E Build/QUokka)",
@@ -510,42 +781,103 @@ def manual_url_flow(download_dir: Path) -> None:
         download_with_progress(url, out, session=s)
         section(console, "Download Complete")
         console.print(f"[green]Done![/] File saved:\n[bold]{out}[/]")
+        if Confirm.ask("Open download folder?", default=True):
+            _open_folder(download_dir)
     except KeyboardInterrupt:
-        section(console, "Interrupted")
-        console.print("[yellow]Interrupted by user.[/]")
+        section(console, "Paused")
+        console.print(
+            "[yellow]Download paused.[/] Partial file kept — run again to resume.\n"
+            f"[dim]{out.with_suffix(out.suffix + '.part')}[/]"
+        )
     except Exception as e:
         section(console, "Download Failed")
         console.print(f"[red]Download failed:[/] {e}")
 
+# ────────────────────────── Settings menu ──────────────────────────
+def _settings_menu(cfg: Dict[str, Any], out_dir: Path) -> None:
+    from . import __version__
+    while True:
+        verbose_lbl    = "[green]ON[/]"  if cfg.get("verbose")          else "[dim]off[/]"
+        auto_open_lbl  = "[green]ON[/]"  if cfg.get("auto_open_folder") else "[dim]off[/]"
+        beta_lbl       = "[yellow]ON[/]" if cfg.get("include_beta")     else "[dim]off[/]"
+        hist_count     = len(cfg.get("history", []))
+        upd = _poll_update()
+        ver_line = (
+            f"v{__version__} — [green]up to date[/]" if upd is None
+            else f"v{__version__} — [yellow]v{upd[0]} available[/]"
+        )
+
+        items = [
+            (f"Verbose logging          {verbose_lbl}",         "VERBOSE"),
+            (f"Auto-open folder         {auto_open_lbl}",       "AUTO_OPEN"),
+            (f"Include beta firmware    {beta_lbl}",            "BETA"),
+            (f"Download history         {hist_count} entries",  "HISTORY"),
+            ("Open output folder",                               "OPEN_OUT"),
+            ("Open config folder",                               "OPEN_CFG"),
+            (f"Version                  {ver_line}",            None),
+            ("[dim]Back[/]",                                     "BACK"),
+        ]
+        choice = Menu(
+            console, items,
+            title="Settings / Info",
+            subtitle=f"Config: {config_path()}"
+        ).show()
+
+        if not choice or choice == "BACK":
+            break
+        elif choice == "VERBOSE":
+            cfg["verbose"] = not cfg.get("verbose", False)
+            save_cfg(cfg)
+        elif choice == "AUTO_OPEN":
+            cfg["auto_open_folder"] = not cfg.get("auto_open_folder", False)
+            save_cfg(cfg)
+            state = "enabled" if cfg["auto_open_folder"] else "disabled"
+            console.print(f"[dim]Auto-open folder {state}.[/]")
+        elif choice == "BETA":
+            cfg["include_beta"] = not cfg.get("include_beta", False)
+            save_cfg(cfg)
+            state = "enabled" if cfg["include_beta"] else "disabled"
+            console.print(
+                f"[dim]Beta firmware search {state}. "
+                "Beta builds may be unstable — use at your own risk.[/]"
+            )
+        elif choice == "HISTORY":
+            if hist_count == 0:
+                console.print("[dim]No downloads recorded yet.[/]")
+                console.input("[dim]Press Enter to continue…[/]")
+                continue
+            # Show last 10 entries
+            section(console, "Download History", f"Showing last {min(hist_count, 10)} of {hist_count}")
+            for e in cfg.get("history", [])[:10]:
+                console.print(
+                    f"  [cyan]{e.get('downloaded_at','?')}[/]  "
+                    f"[bold]{e.get('model','?')}[/]  "
+                    f"{e.get('version','?')}  "
+                    f"[dim]{e.get('file','?')}[/]"
+                )
+            console.print()
+            if Confirm.ask(f"Clear all {hist_count} history entries?", default=False):
+                cfg["history"] = []
+                save_cfg(cfg)
+                console.print("[dim]History cleared.[/]")
+            else:
+                console.input("[dim]Press Enter to continue…[/]")
+        elif choice == "OPEN_OUT":
+            _open_folder(out_dir)
+        elif choice == "OPEN_CFG":
+            _open_folder(config_path().parent)
+
 # ────────────────────────── Main menu ──────────────────────────
 def main_menu(out_dir: Path) -> None:
-    # ─── Update Check (Background) ───
-    try:
-        from . import __version__ as app_ver
-        from .core.utils import check_github_update
-        import threading
-        # We'll attach this dict to the function or use a mutable local
-        # A simple mutable list works to pass data from thread
-        update_info = [] 
-        def _check():
-            res = check_github_update(app_ver)
-            if res:
-                update_info.append(res) # (tag, url)
-
-        # Only check once per run
-        if not hasattr(main_menu, "_checked"):
-            t = threading.Thread(target=_check, daemon=True)
-            t.start()
-            main_menu._checked = True
-    except ImportError:
-        update_info = []
-
+    _start_update_check()   # fire-and-forget; result readable via _poll_update()
     cfg = load_cfg()
     while True:
-        # Show update banner if found
-        if update_info:
-            ver, url = update_info[0]
-            console.print(Panel(f"🚀 [bold green]New Version Available: v{ver}[/]\n[link={url}]Click here to download[/]", border_style="green", expand=False), justify="center")
+        upd = _poll_update()
+        if upd:
+            ver, url = upd
+            console.print(Panel(
+                f"[bold green]New Version Available: v{ver}[/]\n[link={url}]Click here to download[/]",
+                border_style="green", expand=False), justify="center")
 
         default_name = cfg.get("last_profile") or "(none)"
         
@@ -566,6 +898,9 @@ def main_menu(out_dir: Path) -> None:
         
         ans = menu.show()
 
+        _beta = cfg.get("include_beta", False)
+        _verb = cfg.get("verbose", False)
+
         if ans == "EXIT" or ans is None:
             clear_screen(console)
             return
@@ -573,17 +908,17 @@ def main_menu(out_dir: Path) -> None:
         elif ans == "QUICK":
             name = cfg.get("last_profile", "")
             if name and name in cfg["profiles"]:
-                run_search_download_flow(cfg["profiles"][name], out_dir, cfg.get("verbose", False))
+                run_search_download_flow(cfg["profiles"][name], out_dir, _verb, include_beta=_beta)
             else:
                 console.print("[yellow]No default profile set. Opening Profiles…[/]")
                 p = profile_menu(cfg)
                 if p:
-                    run_search_download_flow(p, out_dir, cfg.get("verbose", False))
+                    run_search_download_flow(p, out_dir, _verb, include_beta=_beta)
 
         elif ans == "PROFILES":
             p = profile_menu(cfg)
             if p and Confirm.ask("Run Quick Search with this profile now?", default=True):
-                run_search_download_flow(p, out_dir, cfg.get("verbose", False))
+                run_search_download_flow(p, out_dir, _verb, include_beta=_beta)
 
         elif ans == "DEEP":
             name = cfg.get("last_profile", "")
@@ -592,24 +927,20 @@ def main_menu(out_dir: Path) -> None:
                 p = cfg["profiles"][name]
             else:
                 p = profile_menu(cfg)
-            
             if p:
-                run_search_download_flow(p, out_dir, cfg.get("verbose", False), deep_scan=True)
+                run_search_download_flow(p, out_dir, _verb, deep_scan=True, include_beta=_beta)
 
         elif ans == "ADHOC":
             p = prompt_adhoc_params()
             if p:
-                run_search_download_flow(p, out_dir, cfg.get("verbose", False))
+                run_search_download_flow(p, out_dir, _verb,
+                                         deep_scan=p.pop("_deep", False), include_beta=_beta)
 
         elif ans == "MANUAL":
             manual_url_flow(out_dir / "manual")
 
         elif ans == "SETTINGS":
-            section(console, "Settings / Info", f"Config: {config_path()}\nOutput: {out_dir}")
-            console.print(f"Verbose logs: {'ON' if cfg.get('verbose', False) else 'OFF'}")
-            if Confirm.ask("Toggle verbose?", default=False):
-                cfg["verbose"] = not cfg.get("verbose", False)
-                save_cfg(cfg)
+            _settings_menu(cfg, out_dir)
             
         elif ans == "ADDONS":
             addons_menu()
@@ -628,8 +959,6 @@ def parse_args():
 
 def main():
     args = parse_args()
-    out_dir = Path(args.out)
-    out_dir.mkdir(parents=True, exist_ok=True)
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
     

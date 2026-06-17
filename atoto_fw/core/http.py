@@ -1,5 +1,8 @@
 import requests
 from requests.adapters import HTTPAdapter, Retry
+import urllib3
+
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 UA   = "ATOTO-Firmware-CLI/3.2"
 

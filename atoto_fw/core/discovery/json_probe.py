@@ -32,11 +32,44 @@ def candidate_endpoints_for_model(model: str) -> List[str]:
             seen.add(u); out.append(u)
     return out
 
-def discover_packages_via_json(model: str, progress=None, seen_endpoints: Optional[set]=None) -> Tuple[List[Dict[str,Any]], str]:
+def _parse_endpoint(data: Any, base_url: str) -> List[Dict[str, Any]]:
+    """Extract package dicts from a parsed JSON endpoint response."""
+    if isinstance(data, list):
+        iterable = data
+    elif isinstance(data, dict):
+        iterable = data.get("packages") or data.get("firmware") or data.get("files") or []
+    else:
+        return []
+
+    pkgs = []
+    for idx, e in enumerate(iterable, start=1):
+        if not isinstance(e, dict): continue
+        url = e.get("url") or e.get("file") or e.get("download") or e.get("href")
+        if not url: continue
+        title   = e.get("title") or e.get("name") or url_leaf_name(url)
+        version = e.get("version") or re.findall(r'([rv]?[\d._-]+)', (title or "").replace(" ", ""))[:1]
+        version = version[0] if isinstance(version, list) and version else (version or "N/A")
+        size    = e.get("size") or None
+        date    = e.get("date") or e.get("time") or e.get("released") or ""
+        sha     = e.get("sha256") or e.get("sha1") or e.get("md5") or ""
+        full    = url if url.startswith("http") else f"{BASE.rstrip('/')}/{url.lstrip('/')}"
+        pkgs.append({"id": str(idx), "title": title, "version": version, "date": date,
+                     "size": size, "url": full, "hash": sha, "source": "JSON"})
+    return pkgs
+
+def discover_packages_via_json(model: str, progress=None, seen_endpoints: Optional[set] = None) -> Tuple[List[Dict[str, Any]], str]:
+    """
+    Probe all candidate JSON endpoints for model and return every package found
+    across all of them (not just the first hit). seen_endpoints prevents re-probing
+    the same URL across multiple model candidates.
+    """
     eps = candidate_endpoints_for_model(model)
-    if seen_endpoints is None: seen_endpoints=set()
+    if seen_endpoints is None: seen_endpoints = set()
     eps = [u for u in eps if u not in seen_endpoints]
     total = len(eps) or 1
+
+    all_pkgs: List[Dict[str, Any]] = []
+    first_hit = ""
 
     for i, u in enumerate(eps, start=1):
         seen_endpoints.add(u)
@@ -47,23 +80,10 @@ def discover_packages_via_json(model: str, progress=None, seen_endpoints: Option
         except Exception:
             continue
 
-        if isinstance(data, list): iterable = data
-        elif isinstance(data, dict): iterable = data.get("packages") or data.get("firmware") or data.get("files") or []
-        else: iterable = []
-
-        pkgs=[]
-        for idx, e in enumerate(iterable, start=1):
-            if not isinstance(e, dict): continue
-            url = e.get("url") or e.get("file") or e.get("download") or e.get("href")
-            if not url: continue
-            title = e.get("title") or e.get("name") or url_leaf_name(url)
-            version = e.get("version") or re.findall(r'([rv]?[\d._-]+)', (title or "").replace(" ",""))[:1]
-            version = version[0] if isinstance(version, list) and version else (version or "N/A")
-            size = e.get("size") or None
-            date = e.get("date") or e.get("time") or e.get("released") or ""
-            sha  = e.get("sha256") or e.get("sha1") or e.get("md5") or ""
-            full = url if url.startswith("http") else f"{BASE.rstrip('/')}/{url.lstrip('/')}"
-            pkgs.append({"id":str(idx),"title":title,"version":version,"date":date,"size":size,"url":full,"hash":sha,"source":"JSON"})
+        pkgs = _parse_endpoint(data, u)
         if pkgs:
-            return pkgs, u
-    return [], ""
+            if not first_hit:
+                first_hit = u
+            all_pkgs.extend(pkgs)
+
+    return all_pkgs, first_hit

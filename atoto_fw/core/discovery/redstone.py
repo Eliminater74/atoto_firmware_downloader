@@ -1,89 +1,160 @@
-
 """
 atoto_fw.core.discovery.redstone
-Implementation of the Redstone FOTA protocol used by newer ATOTO models (e.g. X10 series).
+Redstone FOTA protocol used by newer ATOTO models (X10 series, QCM6125 chipset).
 Endpoint: https://fota.redstone.net.cn:7100/service/request
+
+POST body confirmed by community network capture (2025-08):
+  {"version":"A1.0","session":"FUMO-REQ","devid":"SN:xxxx","man":"ATOTO",
+   "mod":"qcm6125_T10","swv":"<current_fw_version>",
+   "carrier":{"appid":"ilppa7c9qlze3znkzaaxdqpa","channel":"myatoto"}}
+
+The server returns firmware newer than swv.  We probe with several known old
+versions so we can surface multiple historical packages in one search.
 """
 
 import requests
-import json
 import urllib3
-from datetime import datetime
-from typing import List, Dict, Optional
+from typing import Dict, List, Optional
 
-# Disable SSL warnings for this specific endpoint as it often has cert issues or requires specific trust
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 REDSTONE_URL = "https://fota.redstone.net.cn:7100/service/request"
 
-# Default payload template based on capture from X10 user
-DEFAULT_PAYLOAD = {
-    "version": "A1.0",
-    "session": "FUMO-REQ",
-    "devid": "SN:5319f700",  # Generic/Sample SN, might need actual user input?
-    "man": "ATOTO",
-    "mod": "qcm6125_T10",    # Default to X10 platform
-    "swv": "20200101.000000", # Old version to force update check
-    "carrier": {
-        "appid": "ilppa7c9qlze3znkzaaxdqpa",
-        "channel": "myatoto"
-    }
+# Maps model substring (uppercase) to the Redstone platform identifier.
+# Community-captured values — add new entries as captures are shared.
+PLATFORM_MAP: Dict[str, str] = {
+    "X10":   "qcm6125_T10",   # X10 Gen2 (confirmed capture)
+    "X10G2": "qcm6125_T10",
+    "X10D":  "qcm6125_T10",   # X10 DAB variant (X10DG2B7E)
 }
+
+# Known firmware versions for qcm6125_T10, captured from real devices.
+# Probing with each as swv discovers the update that follows it.
+# (True = full/factory firmware, False = incremental OTA)
+_PROBE_VERSIONS: List[tuple] = [
+    ("20200101.000000", False),   # sentinel — triggers "give me latest"
+    ("20250318.213333", False),
+    ("20250430.143509", False),
+    ("20250815.210712", False),
+    ("20250925.150720", True),    # full firmware
+    ("20251021.191955", False),
+    ("20251106.174502", False),
+    # 20260403.140715 confirmed April 2026 2.22 GB — use earlier swv values to fetch it
+]
+
+# Which toversion strings are known-full (not incremental)
+_KNOWN_FULL: Dict[str, bool] = {
+    "20250925.150720": True,
+    "20260403.140715": True,    # 2.22 GB confirmed full firmware (April 2026)
+}
+
+_HEADERS = {
+    "User-Agent": "Dalvik/2.1.0 (Linux; U; Android 13; ATOTO Build/QP1A)",
+    "Content-Type": "application/json",
+}
+
+# Extra channel strings to try when include_beta=True.
+# These are speculative — add confirmed captures here as they are shared.
+_BETA_CHANNELS = ["myatoto-beta", "myatoto_test", "myatoto_cn"]
+
+
+def platform_for_model(model: str) -> Optional[str]:
+    """Return the Redstone platform string for a model, or None if unknown."""
+    mu = (model or "").upper()
+    for key, plat in PLATFORM_MAP.items():
+        if key in mu:
+            return plat
+    return None
+
+
 
 def fetch_redstone_update(
     model: str,
     sn: str = "SN:5319f700",
-    current_version: str = "20250101.000000"
+    current_version: str = "",
+    include_beta: bool = False,
 ) -> List[Dict]:
     """
-    Check for updates via Redstone FOTA.
-    Returns a list of candidate dictionaries (compatible with our standard format).
+    Probe the Redstone FOTA server for firmware newer than each known version.
+    Returns a list of unique candidate dicts (compatible with our standard format).
+    Returns [] immediately for models not in PLATFORM_MAP.
     """
-    
-    # Determine 'mod' (platform) from model name
-    # Heuristic: X10 usually maps to qcm6125_T10
-    platform = "qcm6125_T10" 
-    if "S8" in model.upper():
-        # TODO: Check if S8 uses this? Unlikely, usually Gocsdk.
-        pass
+    platform = platform_for_model(model)
+    if not platform:
+        return []
 
-    payload = DEFAULT_PAYLOAD.copy()
-    payload["devid"] = sn if sn.startswith("SN:") else f"SN:{sn}"
-    payload["mod"] = platform
-    payload["swv"] = current_version
-    
-    # User-Agent mimicking actual device
-    headers = {
-        "User-Agent": f"Dalvik/2.1.0 (Linux; U; Android 10; {model} Build/QUokka)",
-        "Content-Type": "application/json"
-    }
+    sn_str = sn if sn.startswith("SN:") else f"SN:{sn}"
+    probes = list(_PROBE_VERSIONS)
+    if current_version and not any(v == current_version for v, _ in probes):
+        probes.insert(0, (current_version, False))
 
-    try:
-        r = requests.post(REDSTONE_URL, json=payload, headers=headers, verify=False, timeout=15)
-        r.raise_for_status()
-        data = r.json()
-        
-        # Check success
-        if data.get("msg") == "success" and "fw" in data:
-            fw = data["fw"]
-            url = fw.get("objecturi")
-            ver = fw.get("toversion", "Unknown")
-            name = fw.get("objectName", f"Update_{ver}.zip")
-            size = int(fw.get("objectsize", 0))
-            
-            # Convert to our internal candidate format
-            return [{
-                "title": f"[Redstone] {name}",
-                "url": url,
-                "version": ver,
-                "date": fw.get("dateline", "").split('T')[0], # 20251118T... -> 20251118
-                "size": size,
-                "mirror": False,
-                "desc": f"Source: Redstone FOTA\nMD5: {fw.get('icv','')}\nPlatform: {platform}"
-            }]
-            
-    except Exception as e:
-        # print(f"Redstone probe failed: {e}")
-        pass
+    seen_urls: set = set()    # deduplicate by URL
+    seen_vers: set = set()    # deduplicate by (version, size) — CDN may return different URLs for same file
+    results: List[Dict] = []
 
-    return []
+    # Release-channel probes
+    channels = ["myatoto"]
+    if include_beta:
+        channels += _BETA_CHANNELS
+
+    for swv, _ in probes:
+        for channel in channels:
+            try:
+                payload = {
+                    "version": "A1.0",
+                    "session": "FUMO-REQ",
+                    "devid": sn_str,
+                    "man": "ATOTO",
+                    "mod": platform,
+                    "swv": swv,
+                    "carrier": {
+                        "appid": "ilppa7c9qlze3znkzaaxdqpa",
+                        "channel": channel,
+                    },
+                }
+                r = requests.post(REDSTONE_URL, json=payload, headers=_HEADERS,
+                                  verify=False, timeout=12)
+                r.raise_for_status()
+                data = r.json()
+                if data.get("msg") != "success" or "fw" not in data:
+                    continue
+                fw = data["fw"]
+                url = fw.get("objecturi", "")
+                if not url or url in seen_urls:
+                    continue
+                ver = fw.get("toversion", "")
+                size = int(fw.get("objectsize") or 0)
+                # CDN sometimes returns different node URLs for the same file;
+                # deduplicate by (version, size) as a secondary key
+                ver_key = (ver, size)
+                if ver_key in seen_vers:
+                    continue
+                seen_urls.add(url)
+                seen_vers.add(ver_key)
+
+                name = fw.get("objectName") or f"redstone_{ver}.zip"
+                icv  = fw.get("icv", "")
+
+                raw_date = (fw.get("dateline") or "")[:8]
+                if len(raw_date) == 8 and raw_date.isdigit():
+                    date = f"{raw_date[:4]}-{raw_date[4:6]}-{raw_date[6:]}"
+                else:
+                    date = raw_date
+
+                is_full = _KNOWN_FULL.get(ver, False)
+                is_beta = (channel != "myatoto") or "beta" in name.lower() or "beta" in ver.lower()
+                kind = (" [FULL]" if is_full else " [incremental]") + (" [beta]" if is_beta else "")
+
+                results.append({
+                    "title":   f"[Redstone] {name}{kind}",
+                    "url":     url,
+                    "version": ver,
+                    "date":    date,
+                    "size":    size,
+                    "hash":    icv,
+                    "source":  "Redstone",
+                })
+            except Exception:
+                continue
+
+    return results

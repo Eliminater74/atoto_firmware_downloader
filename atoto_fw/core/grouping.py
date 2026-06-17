@@ -1,6 +1,20 @@
 from __future__ import annotations
+import re
 from typing import Any, Dict, List
 from .variants import infer_resolution_from_name, scope_from_res, detect_variants_from_text
+
+def _date_sort_key(r: Dict[str, Any]) -> str:
+    """Normalize date strings to YYYY-MM-DD for descending sort. Empty dates sort last."""
+    d = (r.get("date") or "").strip()
+    if re.match(r'^\d{8}$', d):          # YYYYMMDD → YYYY-MM-DD
+        d = f"{d[:4]}-{d[4:6]}-{d[6:]}"
+    elif re.match(r'^\d{6}$', d):        # YYMMDD → 20YY-MM-DD
+        d = f"20{d[:2]}-{d[2:4]}-{d[4:]}"
+    return d if d else "0000-00-00"      # empty → sorts last
+
+def sort_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Return rows sorted newest-first. Rows with no date fall to the bottom."""
+    return sorted(rows, key=_date_sort_key, reverse=True)
 
 def tag_rows(rows: List[Dict[str,Any]], my_res: str) -> None:
     my_res = (my_res or "").lower().replace("×","x")
