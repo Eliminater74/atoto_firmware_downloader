@@ -212,7 +212,7 @@ def render_and_pick(
         ))
 
         table = Table(
-            title="Available Packages (Use ↑/↓ and Enter)",
+            title="Available Packages (Use Up/Down and Enter)",
             show_lines=False,
             header_style="bold magenta",
             box=box.SIMPLE_HEAVY

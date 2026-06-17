@@ -5,12 +5,22 @@ from .discovery.normalize import normalize_candidates
 from .discovery.api import fetch_api_packages
 from .discovery.json_probe import discover_packages_via_json
 from .discovery.mirrors import known_links_for_model
+from .discovery.hcn_scraper import fetch_hcn_server_packages
 from .grouping import dedupe_rows
 
 def try_lookup(model: str, mcu: str, progress=None, deep_scan: bool = False) -> Tuple[List[Dict[str,Any]], List[str]]:
     cands = normalize_candidates(model)
     hits: List[str] = []
     merged: List[Dict[str,Any]] = []
+
+    if progress: progress("Scanning HCN server directories...")
+    try:
+        hcn_pkgs = fetch_hcn_server_packages(model)
+        if hcn_pkgs:
+            merged.extend(hcn_pkgs)
+            hits.append("HCN_Server")
+    except Exception:
+        pass
 
     if deep_scan:
         if "S8" in model or "6315" in model:
@@ -45,6 +55,8 @@ def try_lookup(model: str, mcu: str, progress=None, deep_scan: bool = False) -> 
             for p in pkgs_json: p["title"] = f"[{cand}] {p['title']}"
             merged.extend(pkgs_json)
             break
+
+
 
     if progress: progress("Adding mirrors…")
     leader = cands[0] if cands else model

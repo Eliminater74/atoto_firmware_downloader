@@ -111,7 +111,7 @@ class Menu:
                     lines.append(f"{cursor}{label}")
             
             self.console.print("\n".join(lines))
-            self.console.print("\n[dim]Use ↑/↓ and Enter to select. Esc/0 to Cancel.[/]")
+            self.console.print("\n[dim]Use Up/Down and Enter to select. Esc/0 to Cancel.[/]")
 
             # Input
             key = msvcrt.getch()
