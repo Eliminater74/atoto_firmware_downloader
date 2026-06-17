@@ -26,21 +26,30 @@ PLATFORM_MAP: Dict[str, str] = {
     "X10":   "qcm6125_T10",   # X10 Gen2 (confirmed capture)
     "X10G2": "qcm6125_T10",
     "X10D":  "qcm6125_T10",   # X10 DAB variant (X10DG2B7E)
+    "HN7":   "HN7",           # A7 / HN7 (Autochips MT6765)
+    "A7":    "HN7",
+    "G36":   "HN7",
 }
 
-# Known firmware versions for qcm6125_T10, captured from real devices.
-# Probing with each as swv discovers the update that follows it.
+# Known firmware versions by platform, captured from real devices.
 # (True = full/factory firmware, False = incremental OTA)
-_PROBE_VERSIONS: List[tuple] = [
-    ("20200101.000000", False),   # sentinel — triggers "give me latest"
-    ("20250318.213333", False),
-    ("20250430.143509", False),
-    ("20250815.210712", False),
-    ("20250925.150720", True),    # full firmware
-    ("20251021.191955", False),
-    ("20251106.174502", False),
-    # 20260403.140715 confirmed April 2026 2.22 GB — use earlier swv values to fetch it
-]
+_PLATFORM_PROBES: Dict[str, List[tuple]] = {
+    "qcm6125_T10": [
+        ("20200101.000000", False),   # sentinel — triggers "give me latest"
+        ("20250318.213333", False),
+        ("20250430.143509", False),
+        ("20250815.210712", False),
+        ("20250925.150720", True),    # full firmware
+        ("20251021.191955", False),
+        ("20251106.174502", False),
+    ],
+    "HN7": [
+        ("2020.01.01.00.00", False),
+        ("2025.01.01.00.00", False),
+        ("2026.02.03.13.16", False),
+    ]
+}
+
 
 # Which toversion strings are known-full (not incremental)
 _KNOWN_FULL: Dict[str, bool] = {
@@ -84,7 +93,7 @@ def fetch_redstone_update(
         return []
 
     sn_str = sn if sn.startswith("SN:") else f"SN:{sn}"
-    probes = list(_PROBE_VERSIONS)
+    probes = list(_PLATFORM_PROBES.get(platform, [("20200101.000000", False)]))
     if current_version and not any(v == current_version for v, _ in probes):
         probes.insert(0, (current_version, False))
 
@@ -93,7 +102,10 @@ def fetch_redstone_update(
     results: List[Dict] = []
 
     # Release-channel probes
-    channels = ["myatoto"]
+    if platform == "HN7":
+        channels = ["HN7"]
+    else:
+        channels = ["myatoto"]
     if include_beta:
         channels += _BETA_CHANNELS
 
